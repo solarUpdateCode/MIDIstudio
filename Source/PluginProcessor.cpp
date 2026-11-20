@@ -2,12 +2,27 @@
 #include "PluginEditor.h"
 #include <algorithm>
 #include <cmath>
+#include <thread>
 
 namespace {
     const juce::StringArray kMeterChoices { "4/4", "3/4", "6/8", "2/4", "5/4", "7/8" };
     const juce::StringArray kKeyChoices   { "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" };
     const juce::StringArray kScaleChoices { "Minor", "Major", "Dorian", "Mixolydian", "Harmonic Minor", "Pentatonic Minor" };
     const juce::Colour kPalette[] = { juce::Colour (0xffffb84d), juce::Colour (0xffe67e35), juce::Colour (0xfff0c46c), juce::Colour (0xfff26d52), juce::Colour (0xffffd98a), juce::Colour (0xff78c6a3) };
+}
+
+const juce::StringArray& MIDIstudioAudioProcessor::getMuscriptorInstruments()
+{
+    static const juce::StringArray kInst {
+        "acoustic piano", "electric piano", "chromatic percussion", "organ",
+        "acoustic guitar", "clean electric guitar", "distorted electric guitar",
+        "acoustic bass", "electric bass", "violin", "viola", "cello", "contrabass",
+        "orchestral harp", "timpani", "string ensemble", "synth strings", "voice",
+        "orchestra hit", "trumpet", "trombone", "tuba", "french horn", "brass section",
+        "soprano & alto sax", "tenor sax", "baritone sax", "oboe", "english horn",
+        "bassoon", "clarinet", "flutes", "synth lead", "synth pad", "drums"
+    };
+    return kInst;
 }
 
 MIDIstudioAudioProcessor::MIDIstudioAudioProcessor()
@@ -40,7 +55,9 @@ void MIDIstudioAudioProcessor::clearSessionToCleanRoll()
     tracks.clear();
     chords.clear();
     loadedAudioBuffer.setSize (0, 0);
+    loadedAudioFile = juce::File{};
     sessionName = "Session_01";
+    statusMessage = "Clean Roll - Ready";
     barOffsetSec.store (0.0);
 }
 
@@ -63,25 +80,10 @@ double MIDIstudioAudioProcessor::getEffectiveBpm() const
            : detectedBpm.load();
 }
 
-int MIDIstudioAudioProcessor::getBeatsPerBar() const
-{
-    return getMeterString().upToFirstOccurrenceOf ("/", false, false).getIntValue();
-}
-
-juce::String MIDIstudioAudioProcessor::getMeterString() const
-{
-    return kMeterChoices[juce::jlimit (0, kMeterChoices.size() - 1, static_cast<int> (apvts.getRawParameterValue ("meterIdx")->load()))];
-}
-
-juce::String MIDIstudioAudioProcessor::getKeyRootString() const
-{
-    return kKeyChoices[juce::jlimit (0, kKeyChoices.size() - 1, static_cast<int> (apvts.getRawParameterValue ("keyRoot")->load()))];
-}
-
-juce::String MIDIstudioAudioProcessor::getScaleString() const
-{
-    return kScaleChoices[juce::jlimit (0, kScaleChoices.size() - 1, static_cast<int> (apvts.getRawParameterValue ("scaleIdx")->load()))];
-}
+int MIDIstudioAudioProcessor::getBeatsPerBar() const { return getMeterString().upToFirstOccurrenceOf ("/", false, false).getIntValue(); }
+juce::String MIDIstudioAudioProcessor::getMeterString() const { return kMeterChoices[juce::jlimit (0, kMeterChoices.size() - 1, static_cast<int> (apvts.getRawParameterValue ("meterIdx")->load()))]; }
+juce::String MIDIstudioAudioProcessor::getKeyRootString() const { return kKeyChoices[juce::jlimit (0, kKeyChoices.size() - 1, static_cast<int> (apvts.getRawParameterValue ("keyRoot")->load()))]; }
+juce::String MIDIstudioAudioProcessor::getScaleString() const { return kScaleChoices[juce::jlimit (0, kScaleChoices.size() - 1, static_cast<int> (apvts.getRawParameterValue ("scaleIdx")->load()))]; }
 
 int MIDIstudioAudioProcessor::getProcessedVelocity (const InstrumentTrack& trk, int rawVel) const
 {
@@ -171,35 +173,49 @@ void MIDIstudioAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         }
     }
 }
+
+bool MIDIstudioAudioProcessor::loadMidiFromMemory (const juce::MemoryBlock& midiBytes, const juce::String& title)
+{
+    juce::MemoryInputStream mis (midiBytes, false);
+    juce::MidiFile mf;
+    if (!mf.readFrom (mis)) return false;
+    mf.convertTimestampTicksToSeconds();
+    const juce::ScopedLock sl (stateLock);
+    tracks.clear();
+    if (title.isNotEmpty()) sessionName = title;
+    double maxSec = 8.0;
+    for (int ti = 0; ti < mf.getNumTracks(); ++ti) {
+        const auto* seq = mf.getTrack (ti); if (!seq) continue;
+        InstrumentTrack trk; trk.id = "trk_" + juce::String (ti); trk.name = "track " + juce::String (ti + 1); trk.colour = kPalette[ti % 6];
+        for (int ei = 0; ei < seq->getNumEvents(); ++ei) {
+            const auto& ev = *seq->getEventPointer (ei); const auto& msg = ev.message;
+            if (msg.isTrackNameEvent()) trk.name = msg.getTextFromTextMetaEvent().toLowerCase();
+            else if (msg.isProgramChange()) trk.program = msg.getProgramChangeNumber();
+            else if (msg.isTempoMetaEvent() && msg.getTempoSecondsPerQuarterNote() > 0.0) detectedBpm.store (std::round ((60.0 / msg.getTempoSecondsPerQuarterNote()) * 2.0) / 2.0);
+            else if (msg.isNoteOn()) {
+                if (msg.getChannel() == 10) trk.isDrum = true;
+                double endT = ev.noteOffObject != nullptr ? ev.noteOffObject->message.getTimeStamp() : msg.getTimeStamp() + 0.25;
+                trk.notes.push_back ({ nextNoteId++, msg.getNoteNumber(), msg.getTimeStamp(), std::max (0.04, endT - msg.getTimeStamp()), msg.getVelocity() });
+                maxSec = std::max (maxSec, endT + 0.5);
+            }
+        }
+        if (!trk.notes.empty()) tracks.push_back (std::move (trk));
+    }
+    durationSec.store (maxSec);
+    playheadSec.store (0.0);
+    statusMessage = "Transcribed (" + juce::String (tracks.size()) + " tracks)";
+    detectKeyAndChords();
+    return true;
+}
+
 bool MIDIstudioAudioProcessor::loadAudioOrMidiFile (const juce::File& file)
 {
     if (!file.existsAsFile()) return false;
     const auto ext = file.getFileExtension().toLowerCase();
     if (ext == ".mid" || ext == ".midi") {
-        juce::FileInputStream stream (file);
-        juce::MidiFile mf;
-        if (!mf.readFrom (stream)) return false;
-        mf.convertTimestampTicksToSeconds();
-        const juce::ScopedLock sl (stateLock);
-        tracks.clear(); sessionName = file.getFileNameWithoutExtension(); double maxSec = 8.0;
-        for (int ti = 0; ti < mf.getNumTracks(); ++ti) {
-            const auto* seq = mf.getTrack (ti); if (!seq) continue;
-            InstrumentTrack trk; trk.id = "trk_" + juce::String (ti); trk.name = "track " + juce::String (ti + 1); trk.colour = kPalette[ti % 6];
-            for (int ei = 0; ei < seq->getNumEvents(); ++ei) {
-                const auto& ev = *seq->getEventPointer (ei); const auto& msg = ev.message;
-                if (msg.isTrackNameEvent()) trk.name = msg.getTextFromTextMetaEvent().toLowerCase();
-                else if (msg.isProgramChange()) trk.program = msg.getProgramChangeNumber();
-                else if (msg.isTempoMetaEvent() && msg.getTempoSecondsPerQuarterNote() > 0.0) detectedBpm.store (std::round ((60.0 / msg.getTempoSecondsPerQuarterNote()) * 2.0) / 2.0);
-                else if (msg.isNoteOn()) {
-                    if (msg.getChannel() == 10) trk.isDrum = true;
-                    double endT = ev.noteOffObject != nullptr ? ev.noteOffObject->message.getTimeStamp() : msg.getTimeStamp() + 0.25;
-                    trk.notes.push_back ({ nextNoteId++, msg.getNoteNumber(), msg.getTimeStamp(), std::max (0.04, endT - msg.getTimeStamp()), msg.getVelocity() });
-                    maxSec = std::max (maxSec, endT + 0.5);
-                }
-            }
-            if (!trk.notes.empty()) tracks.push_back (std::move (trk));
-        }
-        durationSec.store (maxSec); playheadSec.store (0.0); detectKeyAndChords(); return true;
+        juce::MemoryBlock mb;
+        if (!file.loadFileAsData (mb)) return false;
+        return loadMidiFromMemory (mb, file.getFileNameWithoutExtension());
     }
     juce::AudioFormatManager fm; fm.registerBasicFormats();
     if (auto reader = std::unique_ptr<juce::AudioFormatReader> (fm.createReaderFor (file))) {
@@ -207,10 +223,65 @@ bool MIDIstudioAudioProcessor::loadAudioOrMidiFile (const juce::File& file)
         int nSamp = static_cast<int> (std::min<juce::int64> (reader->lengthInSamples, static_cast<juce::int64> (reader->sampleRate * 300.0)));
         loadedAudioBuffer.setSize (static_cast<int> (reader->numChannels), nSamp);
         reader->read (&loadedAudioBuffer, 0, nSamp, 0, true, true);
-        loadedAudioSampleRate = reader->sampleRate; sessionName = file.getFileNameWithoutExtension();
-        durationSec.store (std::max (4.0, static_cast<double> (nSamp) / reader->sampleRate)); playheadSec.store (0.0); return true;
+        loadedAudioSampleRate = reader->sampleRate;
+        loadedAudioFile = file;
+        sessionName = file.getFileNameWithoutExtension();
+        durationSec.store (std::max (4.0, static_cast<double> (nSamp) / reader->sampleRate));
+        playheadSec.store (0.0);
+        statusMessage = "Audio ready - click START TRANSCRIBE";
+        return true;
     }
-    return false;
+    loadedAudioFile = file;
+    sessionName = file.getFileNameWithoutExtension();
+    statusMessage = "File selected - click START TRANSCRIBE";
+    return true;
+}
+
+void MIDIstudioAudioProcessor::startMuscriptorTranscription (std::function<void(bool, juce::String)> onFinished)
+{
+    if (!loadedAudioFile.existsAsFile()) {
+        if (onFinished) onFinished (false, "Load an audio file first");
+        return;
+    }
+    if (isTranscribing.exchange (true)) return;
+
+    const auto audioFile = loadedAudioFile;
+    const auto whitelist = strictInstrumentWhitelist.joinIntoString (",");
+    {
+        const juce::ScopedLock sl (stateLock);
+        statusMessage = "Transcribing via muscriptor.kyutai.org...";
+    }
+
+    std::thread ([this, audioFile, whitelist, onFinished = std::move (onFinished)]() mutable {
+        juce::String endpoint = juce::String ("https://muscriptor.kyutai.org") + "/transcribe/midi";
+        juce::URL url (endpoint);
+        url = url.withFileToUpload ("file", audioFile, "application/octet-stream");
+        if (whitelist.isNotEmpty()) url = url.withParameter ("instruments", whitelist);
+
+        int statusCode = 0;
+        auto options = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inPostData)
+                           .withConnectionTimeoutMs (240000)
+                           .withStatusCode (&statusCode);
+
+        bool ok = false;
+        juce::String msg = "Could not reach muscriptor.kyutai.org";
+        if (auto stream = url.createInputStream (options)) {
+            juce::MemoryBlock responseData;
+            stream->readEntireStreamAsMemoryBlock (responseData);
+            if (statusCode == 200 && responseData.getSize() > 14) {
+                ok = loadMidiFromMemory (responseData, audioFile.getFileNameWithoutExtension());
+                msg = ok ? "Transcribed via muscriptor.kyutai.org" : "Invalid MIDI returned by server";
+            } else {
+                msg = "Server HTTP " + juce::String (statusCode) + " - try a shorter audio clip";
+            }
+        }
+        isTranscribing.store (false);
+        {
+            const juce::ScopedLock sl (stateLock);
+            statusMessage = msg;
+        }
+        juce::MessageManager::callAsync ([ok, msg, cb = std::move (onFinished)]() { if (cb) cb (ok, msg); });
+    }).detach();
 }
 
 void MIDIstudioAudioProcessor::detectKeyAndChords()
