@@ -439,7 +439,7 @@ if (auto fbStream = fbUrl.createInputStream (fbOpt)) {
     }
 }
 }
-        
+}     
         if (ok) transcribeProgress.store (1.0);
         isTranscribing.store (false);
         {
