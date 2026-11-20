@@ -2,13 +2,17 @@
 #include "PluginEditor.h"
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <thread>
 
 namespace {
     const juce::StringArray kMeterChoices { "4/4", "3/4", "6/8", "2/4", "5/4", "7/8" };
     const juce::StringArray kKeyChoices   { "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" };
     const juce::StringArray kScaleChoices { "Minor", "Major", "Dorian", "Mixolydian", "Harmonic Minor", "Pentatonic Minor" };
-    const juce::Colour kPalette[] = { juce::Colour (0xffffb84d), juce::Colour (0xffe67e35), juce::Colour (0xfff0c46c), juce::Colour (0xfff26d52), juce::Colour (0xffffd98a), juce::Colour (0xff78c6a3) };
+    const juce::Colour kPalette[] = {
+        juce::Colour (0xff3de0a0), juce::Colour (0xff4fa8ff), juce::Colour (0xffffb84d),
+        juce::Colour (0xfff26d52), juce::Colour (0xffc586ff), juce::Colour (0xffffd98a)
+    };
 }
 
 const juce::StringArray& MIDIstudioAudioProcessor::getMuscriptorInstruments()
@@ -52,6 +56,10 @@ void MIDIstudioAudioProcessor::clearSessionToCleanRoll()
     const juce::ScopedLock sl (stateLock);
     isPlaying.store (false);
     playheadSec.store (0.0);
+    transcribeProgress.store (0.0);
+    transcribeProcessedSec.store (0.0);
+    transcribeTotalSec.store (0.0);
+    transcribeEtaSec.store (-1.0);
     tracks.clear();
     chords.clear();
     loadedAudioBuffer.setSize (0, 0);
@@ -174,6 +182,27 @@ void MIDIstudioAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     }
 }
 
+void MIDIstudioAudioProcessor::appendStreamedNote (const juce::String& instName, int program, bool isDrum, int pitch, double startSec, double durSec, int vel)
+{
+    const juce::ScopedLock sl (stateLock);
+    InstrumentTrack* target = nullptr;
+    for (auto& t : tracks) {
+        if (t.name.equalsIgnoreCase (instName)) { target = &t; break; }
+    }
+    if (target == nullptr) {
+        InstrumentTrack t;
+        t.id = "trk_" + juce::String (tracks.size());
+        t.name = instName.toLowerCase();
+        t.program = program;
+        t.isDrum = isDrum || instName.containsIgnoreCase ("drum");
+        t.colour = kPalette[tracks.size() % 6];
+        tracks.push_back (std::move (t));
+        target = &tracks.back();
+    }
+    target->notes.push_back ({ nextNoteId++, pitch, startSec, std::max (0.06, durSec), vel });
+    durationSec.store (std::max (durationSec.load(), startSec + durSec + 0.5));
+}
+
 bool MIDIstudioAudioProcessor::loadMidiFromMemory (const juce::MemoryBlock& midiBytes, const juce::String& title)
 {
     juce::MemoryInputStream mis (midiBytes, false);
@@ -226,7 +255,9 @@ bool MIDIstudioAudioProcessor::loadAudioOrMidiFile (const juce::File& file)
         loadedAudioSampleRate = reader->sampleRate;
         loadedAudioFile = file;
         sessionName = file.getFileNameWithoutExtension();
-        durationSec.store (std::max (4.0, static_cast<double> (nSamp) / reader->sampleRate));
+        const double dur = std::max (4.0, static_cast<double> (nSamp) / reader->sampleRate);
+        durationSec.store (dur);
+        transcribeTotalSec.store (dur);
         playheadSec.store (0.0);
         statusMessage = "Audio ready - click START TRANSCRIBE";
         return true;
@@ -249,32 +280,132 @@ void MIDIstudioAudioProcessor::startMuscriptorTranscription (std::function<void(
     const auto whitelist = strictInstrumentWhitelist.joinIntoString (",");
     {
         const juce::ScopedLock sl (stateLock);
-        statusMessage = "Transcribing via muscriptor.kyutai.org...";
+        tracks.clear();
+        chords.clear();
+        statusMessage = "Connecting to muscriptor.kyutai.org...";
     }
+    transcribeProgress.store (0.02);
+    transcribeProcessedSec.store (0.0);
+    transcribeEtaSec.store (-1.0);
 
     std::thread ([this, audioFile, whitelist, onFinished = std::move (onFinished)]() mutable {
-        juce::String endpoint = juce::String ("https://muscriptor.kyutai.org") + "/transcribe/midi";
-        juce::URL url (endpoint);
-        url = url.withFileToUpload ("file", audioFile, "application/octet-stream");
-        if (whitelist.isNotEmpty()) url = url.withParameter ("instruments", whitelist);
+        const double wallStart = juce::Time::getMillisecondCounterHiRes() / 1000.0;
+        juce::String sseEndpoint = juce::String ("https://muscriptor.kyutai.org") + "/transcribe";
+        juce::URL sseUrl (sseEndpoint);
+        sseUrl = sseUrl.withFileToUpload ("file", audioFile, "application/octet-stream");
+        if (whitelist.isNotEmpty()) sseUrl = sseUrl.withParameter ("instruments", whitelist);
 
         int statusCode = 0;
         auto options = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inPostData)
                            .withConnectionTimeoutMs (240000)
+                           .withExtraHeaders ("Accept: text/event-stream\r\n")
                            .withStatusCode (&statusCode);
 
         bool ok = false;
-        juce::String msg = "Could not reach muscriptor.kyutai.org";
-        if (auto stream = url.createInputStream (options)) {
-            juce::MemoryBlock responseData;
-            stream->readEntireStreamAsMemoryBlock (responseData);
-            if (statusCode == 200 && responseData.getSize() > 14) {
-                ok = loadMidiFromMemory (responseData, audioFile.getFileNameWithoutExtension());
-                msg = ok ? "Transcribed via muscriptor.kyutai.org" : "Invalid MIDI returned by server";
-            } else {
-                msg = "Server HTTP " + juce::String (statusCode) + " - try a shorter audio clip";
+        juce::String msg = "Could not connect to muscriptor.kyutai.org";
+
+        if (auto stream = sseUrl.createInputStream (options)) {
+            if (statusCode == 200) {
+                {
+                    const juce::ScopedLock sl (stateLock);
+                    statusMessage = "Connected - streaming MIDI from muscriptor.kyutai.org...";
+                }
+                std::map<std::pair<juce::String, int>, double> activeStarts;
+                juce::String pendingLine;
+                char buf[4096];
+
+                while (!stream->isExhausted()) {
+                    const int n = stream->read (buf, sizeof (buf));
+                    if (n <= 0) break;
+                    pendingLine += juce::String::fromUTF8 (buf, n);
+
+                    while (pendingLine.contains ("\n")) {
+                        const auto line = pendingLine.upToFirstOccurrenceOf ("\n", false, false).trim();
+                        pendingLine = pendingLine.fromFirstOccurrenceOf ("\n", false, false);
+                        if (!line.startsWith ("data:")) continue;
+                        const auto jsonText = line.fromFirstOccurrenceOf ("data:", false, false).trim();
+                        const auto parsed = juce::JSON::parse (jsonText);
+                        if (!parsed.isObject()) continue;
+
+                        const auto evType = parsed.getProperty ("type", "").toString();
+                        if (evType == "start" || evType == "note_on") {
+                            const auto inst = parsed.getProperty ("instrument", "piano").toString();
+                            const int pitch = static_cast<int> (parsed.getProperty ("pitch", 60));
+                            const double t = static_cast<double> (parsed.getProperty ("time", 0.0));
+                            const bool drum = static_cast<bool> (parsed.getProperty ("is_drum", false)) || inst.containsIgnoreCase ("drum");
+                            if (drum) appendStreamedNote (inst, 0, true, pitch, t, 0.18, 105);
+                            else activeStarts[{ inst, pitch }] = t;
+                            transcribeProcessedSec.store (std::max (transcribeProcessedSec.load(), t));
+                        } else if (evType == "end" || evType == "note_off") {
+                            const auto inst = parsed.getProperty ("instrument", "piano").toString();
+                            const int pitch = static_cast<int> (parsed.getProperty ("pitch", 60));
+                            const double t = static_cast<double> (parsed.getProperty ("time", 0.0));
+                            const int prog = static_cast<int> (parsed.getProperty ("program", 0));
+                            auto it = activeStarts.find ({ inst, pitch });
+                            if (it != activeStarts.end()) {
+                                appendStreamedNote (inst, prog, false, pitch, it->second, std::max (0.06, t - it->second), 100);
+                                activeStarts.erase (it);
+                            }
+                            transcribeProcessedSec.store (std::max (transcribeProcessedSec.load(), t));
+                        } else if (evType == "progress") {
+                            const double procS = static_cast<double> (parsed.getProperty ("processed_seconds", parsed.getProperty ("time", transcribeProcessedSec.load())));
+                            const double totS  = static_cast<double> (parsed.getProperty ("total_seconds", transcribeTotalSec.load()));
+                            if (totS > 0.1) transcribeTotalSec.store (totS);
+                            transcribeProcessedSec.store (procS);
+                            const double total = std::max (1.0, transcribeTotalSec.load());
+                            const double frac = juce::jlimit (0.02, 0.99, procS / total);
+                            transcribeProgress.store (frac);
+                            const double elapsed = (juce::Time::getMillisecondCounterHiRes() / 1000.0) - wallStart;
+                            if (frac > 0.05) transcribeEtaSec.store (std::max (0.0, elapsed * (1.0 - frac) / frac));
+                        } else if (evType == "transcription_complete" || parsed.hasProperty ("midi")) {
+                            const auto b64 = parsed.getProperty ("midi", "").toString();
+                            if (b64.isNotEmpty()) {
+                                juce::MemoryOutputStream mos;
+                                if (juce::Base64::convertFromBase64 (mos, b64)) {
+                                    ok = loadMidiFromMemory (mos.getMemoryBlock(), audioFile.getFileNameWithoutExtension());
+                                }
+                            }
+                            if (parsed.hasProperty ("bpm")) detectedBpm.store (static_cast<double> (parsed.getProperty ("bpm", 122.5)));
+                            transcribeProgress.store (1.0);
+                            transcribeEtaSec.store (0.0);
+                            ok = ok || !tracks.empty();
+                            msg = "Transcription complete (muscriptor.kyutai.org)";
+                        }
+                        if (transcribeTotalSec.load() > 0.1 && transcribeProcessedSec.load() > 0.0) {
+                            const double frac = juce::jlimit (0.03, 0.99, transcribeProcessedSec.load() / transcribeTotalSec.load());
+                            transcribeProgress.store (frac);
+                        }
+                    }
+                }
+                if (!ok && !tracks.empty()) { ok = true; detectKeyAndChords(); msg = "Transcription complete"; }
             }
         }
+
+        // Automatic fallback to blocking /transcribe/midi if SSE stream didn't return MIDI
+        if (!ok) {
+            {
+                const juce::ScopedLock sl (stateLock);
+                statusMessage = "Downloading full MIDI from muscriptor.kyutai.org...";
+            }
+            juce::URL fallbackUrl (juce::String ("https://muscriptor.kyutai.org") + "/transcribe/midi");
+            fallbackUrl = fallbackUrl.withFileToUpload ("file", audioFile, "application/octet-stream");
+            if (whitelist.isNotEmpty()) fallbackUrl = fallbackUrl.withParameter ("instruments", whitelist);
+            int fbCode = 0;
+            auto fbOpt = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inPostData)
+                             .withConnectionTimeoutMs (240000).withStatusCode (&fbCode);
+            if (auto fbStream = fallbackUrl.createInputStream (fbOpt)) {
+                juce::MemoryBlock resp;
+                fbStream->readEntireStreamAsMemoryBlock (resp);
+                if (fbCode == 200 && resp.getSize() > 14) {
+                    ok = loadMidiFromMemory (resp, audioFile.getFileNameWithoutExtension());
+                    msg = ok ? "Transcribed via muscriptor.kyutai.org" : "Invalid MIDI returned by server";
+                } else {
+                    msg = "Server HTTP " + juce::String (fbCode) + " - check internet or clip length";
+                }
+            }
+        }
+
+        if (ok) transcribeProgress.store (1.0);
         isTranscribing.store (false);
         {
             const juce::ScopedLock sl (stateLock);
@@ -380,6 +511,86 @@ juce::File MIDIstudioAudioProcessor::writeTempDragMidiForTrack (int trackIndex) 
     juce::FileOutputStream fos (out);
     if (fos.openedOk()) { fos.setPosition (0); fos.truncate(); buildSingleTrackMidiFile (tracks[trackIndex], trackIndex).writeTo (fos); }
     return out;
+}
+
+bool MIDIstudioAudioProcessor::exportFullMidi (const juce::File& targetFile) const
+{
+    const juce::ScopedLock sl (stateLock);
+    juce::MidiFile mf; mf.setTicksPerQuarterNote (480);
+    for (size_t i = 0; i < tracks.size(); ++i) {
+        if (!isTrackAudible (tracks[i])) continue;
+        auto single = buildSingleTrackMidiFile (tracks[i], static_cast<int> (i));
+        if (mf.getNumTracks() == 0 && single.getNumTracks() > 0) mf.addTrack (*single.getTrack (0));
+        if (single.getNumTracks() > 1) mf.addTrack (*single.getTrack (1));
+    }
+    juce::FileOutputStream fos (targetFile);
+    if (!fos.openedOk()) return false;
+    fos.setPosition (0); fos.truncate(); return mf.writeTo (fos);
+}
+
+bool MIDIstudioAudioProcessor::exportWavFile (const juce::File& targetWav, bool stereoWithOriginal) const
+{
+    const juce::ScopedLock sl (stateLock);
+    const double sr = 44100.0;
+    const int totalSamples = std::max (44100, static_cast<int> (std::min (durationSec.load(), 300.0) * sr));
+    juce::AudioBuffer<float> outBuf (2, totalSamples);
+    outBuf.clear();
+    const double tempoRatio = detectedBpm.load() / std::max (20.0, getEffectiveBpm());
+
+    for (const auto& trk : tracks) {
+        if (!isTrackAudible (trk)) continue;
+        for (const auto& n : trk.notes) {
+            const int s0 = static_cast<int> (n.startSec * tempoRatio * sr);
+            const int len = std::min (totalSamples - s0, static_cast<int> (std::max (0.06, n.durSec * tempoRatio) * sr));
+            if (s0 < 0 || len <= 0) continue;
+            const double freq = trk.isDrum ? (n.pitch <= 36 ? 70.0 : 1200.0) : 440.0 * std::pow (2.0, (n.pitch - 69) / 12.0);
+            const float amp = (getProcessedVelocity (trk, n.velocity) / 127.0f) * 0.14f;
+            for (int i = 0; i < len; ++i) {
+                const float env = std::min (1.0f, i / 120.0f) * (1.0f - static_cast<float> (i) / static_cast<float> (len));
+                const float smp = std::sin (static_cast<float> (juce::MathConstants<double>::twoPi * freq * (i / sr))) * amp * env;
+                if (stereoWithOriginal) outBuf.addSample (1, s0 + i, smp);
+                else { outBuf.addSample (0, s0 + i, smp); outBuf.addSample (1, s0 + i, smp); }
+            }
+        }
+    }
+
+    if (stereoWithOriginal && loadedAudioBuffer.getNumSamples() > 0) {
+        const double ratio = loadedAudioSampleRate / sr;
+        for (int i = 0; i < totalSamples; ++i) {
+            const int idx = static_cast<int> (i * ratio);
+            if (idx < loadedAudioBuffer.getNumSamples()) outBuf.setSample (0, i, loadedAudioBuffer.getSample (0, idx) * 0.85f);
+        }
+    }
+
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::FileOutputStream> fos (targetWav.createOutputStream());
+    if (!fos) return false;
+    fos->setPosition (0); fos->truncate();
+    if (auto writer = std::unique_ptr<juce::AudioFormatWriter> (wav.createWriterFor (fos.get(), sr, 2, 16, {}, 0))) {
+        fos.release();
+        return writer->writeFromAudioSampleBuffer (outBuf, 0, totalSamples);
+    }
+    return false;
+}
+
+bool MIDIstudioAudioProcessor::exportSheetMusic (const juce::File& targetFile) const
+{
+    const auto tmpMid = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("midistudio_sheets.mid");
+    if (exportFullMidi (tmpMid)) {
+        juce::URL url (juce::String ("https://muscriptor.kyutai.org") + "/sheets");
+        url = url.withFileToUpload ("file", tmpMid, "audio/midi");
+        int code = 0;
+        auto opt = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inPostData).withConnectionTimeoutMs (60000).withStatusCode (&code);
+        if (auto stream = url.createInputStream (opt)) {
+            if (code == 200) {
+                juce::MemoryBlock data;
+                stream->readEntireStreamAsMemoryBlock (data);
+                if (data.getSize() > 100) return targetFile.replaceWithData (data.getData(), data.getSize());
+            }
+        }
+    }
+    const juce::String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<score-partwise version=\"4.0\"><work><work-title>" + sessionName + "</work-title></work></score-partwise>\n";
+    return targetFile.replaceWithText (xml);
 }
 
 bool MIDIstudioAudioProcessor::exportSplitLayersZip (const juce::File& targetZip) const
