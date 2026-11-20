@@ -395,7 +395,7 @@ void MIDIstudioAudioProcessor::startMuscriptorTranscription (std::function<void(
                              .withConnectionTimeoutMs (240000).withStatusCode (&fbCode);
             if (auto fbStream = fallbackUrl.createInputStream (fbOpt)) {
                 juce::MemoryBlock resp;
-                fbStream->readEntireStreamAsMemoryBlock (resp);
+                fbStream->readIntoMemoryBlock (resp);
                 if (fbCode == 200 && resp.getSize() > 14) {
                     ok = loadMidiFromMemory (resp, audioFile.getFileNameWithoutExtension());
                     msg = ok ? "Transcription complete" : "Invalid MIDI returned by server";
@@ -584,7 +584,7 @@ bool MIDIstudioAudioProcessor::exportSheetMusic (const juce::File& targetFile) c
         if (auto stream = url.createInputStream (opt)) {
             if (code == 200) {
                 juce::MemoryBlock data;
-                stream->readEntireStreamAsMemoryBlock (data);
+                stream->readIntoMemoryBlock (data);
                 if (data.getSize() > 100) return targetFile.replaceWithData (data.getData(), data.getSize());
             }
         }
