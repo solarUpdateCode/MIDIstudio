@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
-VERSION="1.0.0"
+VERSION="1.0.2"
 ARTEFACTS="build/MIDIstudio_artefacts/Release"
 STAGE="installer/macos/stage"
 OUT="MIDIstudio-${VERSION}-macOS-Installer.pkg"
 rm -rf "$STAGE"
-mkdir -p "$STAGE/Applications" "$STAGE/Library/Audio/Plug-Ins/VST3" "$STAGE/Library/Audio/Plug-Ins/Components"
+mkdir -p "$STAGE/Applications" "$STAGE/Library/Audio/Plug-Ins/VST3" "$STAGE/Library/Audio/Plug-Ins/Components" "$STAGE/Library/Application Support/solaraudio/MIDIstudio"
 cp -R "${ARTEFACTS}/Standalone/MIDIstudio.app" "$STAGE/Applications/"
 cp -R "${ARTEFACTS}/VST3/MIDIstudio.vst3" "$STAGE/Library/Audio/Plug-Ins/VST3/"
 cp -R "${ARTEFACTS}/AU/MIDIstudio.component" "$STAGE/Library/Audio/Plug-Ins/Components/"
+cp "installer/macos/start_local_server.sh" "$STAGE/Library/Application Support/solaraudio/MIDIstudio/start_local_server.sh"
+chmod +x "$STAGE/Library/Application Support/solaraudio/MIDIstudio/start_local_server.sh"
 pkgbuild --root "$STAGE" --identifier "com.solaraudio.midistudio" --version "$VERSION" --install-location "/" "$OUT"
 echo "Built macOS Universal Installer: $OUT"
