@@ -27,6 +27,7 @@ Source: "..\..\build\MIDIstudio_artefacts\Release\Standalone\MIDIstudio.exe"; De
 Source: "..\..\build\MIDIstudio_artefacts\Release\VST3\MIDIstudio.vst3\*"; DestDir: "{commoncf64}\VST3\MIDIstudio.vst3"; Components: vst3; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "setup_local_server.bat"; DestDir: "{app}"; Components: localserver; Flags: ignoreversion
 Source: "start_local_server.bat"; DestDir: "{app}"; Components: localserver; Flags: ignoreversion
+Source: "..\local_bridge.py"; DestDir: "{app}"; Components: localserver; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\MIDIstudio"; Filename: "{app}\MIDIstudio.exe"; Components: standalone
