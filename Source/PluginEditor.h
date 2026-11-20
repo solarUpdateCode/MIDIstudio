@@ -47,6 +47,7 @@ private:
     void syncTempoModeControls();
     void rebuildTrackListUI();
     void updateInstrumentWhitelistDisplay();
+    void showDownloadPopupMenu();
 
     MIDIstudioAudioProcessor& proc;
     MIDIstudioLookAndFeel lnf;
@@ -59,13 +60,14 @@ private:
     juce::TextButton clearFilterBtn { "Clear" }, transcribeAnotherBtn { "Transcribe Another" };
     juce::TextButton editToolBtn { "Edit" }, drawToolBtn { "Draw" }, ghostBtn { "Ghost Notes" }, octDownBtn { "-1 Oct" }, octUpBtn { "+1 Oct" };
     juce::TextButton halfTempoBtn { "/2" }, doubleTempoBtn { "x2" }, atPlayheadBtn { "AT PLAYHEAD" }, resetTempoBtn { "Back to detected" };
-    juce::TextButton splitZipBtn { "SPLIT DAW LAYERS (.ZIP)" };
+    juce::TextButton downloadMenuBtn { "Download v" }, splitZipBtn { "SPLIT DAW LAYERS (.ZIP)" };
     juce::Slider mixKnob, quantizeKnob;
     juce::ComboBox meterBox, keyBox, scaleBox;
     PianoRollComponent pianoRoll;
     juce::Viewport trackViewport;
     juce::Component trackContainer;
     juce::OwnedArray<juce::Component> trackRows;
+    size_t lastTrackCount = 0;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAtt, quantAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> stereoAtt, fixedModeAtt;
