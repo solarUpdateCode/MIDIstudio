@@ -1,5 +1,12 @@
 #include "PluginEditor.h"
 
+namespace {
+    juce::String fmtMinSec (double sec) {
+        int s = std::max (0, juce::roundToInt (sec));
+        return juce::String::formatted ("%d:%02d", s / 60, s % 60);
+    }
+}
+
 MIDIstudioLookAndFeel::MIDIstudioLookAndFeel()
 {
     setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff120e0a));
@@ -86,6 +93,34 @@ void PianoRollComponent::paint (juce::Graphics& g)
 {
     auto bounds = getLocalBounds();
     g.fillAll (juce::Colour (0xff0e0b08));
+
+    // Bottom Live Streaming Progress Bar (matching muscriptor.kyutai.org video)
+    auto progBar = bounds.removeFromBottom (26);
+    g.setColour (juce::Colour (0xff14100b)); g.fillRect (progBar);
+    g.setColour (juce::Colour (0xff352717)); g.drawHorizontalLine (progBar.getY(), 0.0f, static_cast<float> (getWidth()));
+
+    const double prog = proc.transcribeProgress.load();
+    auto trackRect = progBar.reduced (10, 10).removeFromLeft (std::max (140, progBar.getWidth() - 290)).toFloat();
+    g.setColour (juce::Colour (0xff261d14)); g.fillRoundedRectangle (trackRect, 3.0f);
+    if (prog > 0.0) {
+        g.setColour (juce::Colour (0xff27e69b));
+        g.fillRoundedRectangle (trackRect.withWidth (trackRect.getWidth() * static_cast<float> (juce::jlimit (0.0, 1.0, prog))), 3.0f);
+    }
+    juce::String progText;
+    {
+        const juce::ScopedLock sl (proc.stateLock);
+        if (proc.isTranscribing.load()) {
+            progText = fmtMinSec (proc.transcribeProcessedSec.load()) + " / " + fmtMinSec (proc.transcribeTotalSec.load());
+            if (proc.transcribeEtaSec.load() >= 0.0) progText += "   Done in " + fmtMinSec (proc.transcribeEtaSec.load());
+            else progText += "   " + proc.statusMessage;
+        } else {
+            progText = proc.statusMessage;
+        }
+    }
+    g.setColour (juce::Colour (0xffffd98a));
+    g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+    g.drawText (progText, static_cast<int> (trackRect.getRight()) + 10, progBar.getY(), progBar.getWidth() - static_cast<int> (trackRect.getRight()) - 16, progBar.getHeight(), juce::Justification::centredRight);
+
     auto chordStrip = bounds.removeFromTop (24);
     g.setColour (juce::Colour (0xff15100b)); g.fillRect (chordStrip);
     g.setColour (juce::Colour (0xff342718)); g.drawHorizontalLine (chordStrip.getBottom() - 1, 0.0f, static_cast<float> (getWidth()));
@@ -105,7 +140,7 @@ void PianoRollComponent::paint (juce::Graphics& g)
 
     const double beatSec = 60.0 / std::max (20.0, proc.getEffectiveBpm());
     const int bpb = proc.getBeatsPerBar();
-    for (int b = 0; b * beatSec < 30.0; ++b) {
+    for (int b = 0; b * beatSec < 40.0; ++b) {
         float x = bounds.getX() + static_cast<float> ((proc.barOffsetSec.load() + b * beatSec) * kPxPerSec);
         if (x > bounds.getRight()) break;
         g.setColour ((b % bpb == 0) ? juce::Colour (0x44ffc873) : juce::Colour (0x14ffc873));
@@ -120,8 +155,8 @@ void PianoRollComponent::paint (juce::Graphics& g)
     }
 
     if (proc.tracks.empty()) {
-        g.setColour (juce::Colour (0x77ffd98a)); g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
-        g.drawText ("Clean Piano Roll - Drop audio or click LOAD AUDIO -> START TRANSCRIBE", bounds, juce::Justification::centred);
+        g.setColour (juce::Colour (0x88ffd98a)); g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
+        g.drawText (proc.isTranscribing.load() ? proc.statusMessage : "Clean Piano Roll - Drop audio or click LOAD AUDIO -> START TRANSCRIBE", bounds, juce::Justification::centred);
     } else {
         const double tempoRatio = proc.detectedBpm.load() / std::max (20.0, proc.getEffectiveBpm());
         for (size_t ti = 0; ti < proc.tracks.size(); ++ti) {
@@ -134,7 +169,7 @@ void PianoRollComponent::paint (juce::Graphics& g)
                 float nh = std::max (5.0f, rowH - 2.0f);
                 g.setColour (trk.colour.withAlpha (0.28f));
                 g.fillRoundedRectangle (x - 2.0f, y - 2.0f, w + 4.0f, nh + 4.0f, 4.0f);
-                g.setColour (trk.colour.withAlpha (static_cast<int> (ti) == selectedTrackIdx ? 0.96f : 0.68f));
+                g.setColour (trk.colour.withAlpha (static_cast<int> (ti) == selectedTrackIdx ? 0.96f : 0.72f));
                 g.fillRoundedRectangle (x, y, w, nh, 2.5f);
                 g.setColour (juce::Colour (0xfffff2cc).withAlpha (0.7f));
                 g.drawRoundedRectangle (x, y, w, nh, 2.5f, 0.8f);
@@ -150,7 +185,7 @@ void PianoRollComponent::paint (juce::Graphics& g)
 
 void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
 {
-    auto bounds = getLocalBounds(); bounds.removeFromTop (24); bounds.removeFromLeft (48);
+    auto bounds = getLocalBounds(); bounds.removeFromBottom (26); bounds.removeFromTop (24); bounds.removeFromLeft (48);
     if (!bounds.contains (e.getPosition())) return;
     const double sec = std::max (0.0, static_cast<double> (e.x - bounds.getX()) / kPxPerSec);
     if (!drawMode) { proc.playheadSec.store (sec); repaint(); return; }
@@ -190,7 +225,7 @@ namespace {
 MIDIstudioAudioProcessorEditor::MIDIstudioAudioProcessorEditor (MIDIstudioAudioProcessor& p)
     : AudioProcessorEditor (&p), proc (p), pianoRoll (p)
 {
-    setLookAndFeel (&lnf); setSize (1200, 710); setResizable (true, true); setResizeLimits (960, 580, 1800, 1120);
+    setLookAndFeel (&lnf); setSize (1220, 720); setResizable (true, true); setResizeLimits (980, 600, 1800, 1120);
     addKeyListener (this); setWantsKeyboardFocus (true);
 
     sessionNameEditor.setText (proc.sessionName, false);
@@ -241,13 +276,11 @@ MIDIstudioAudioProcessorEditor::MIDIstudioAudioProcessorEditor (MIDIstudioAudioP
     fixedTempoToggle.onClick = [this] { syncTempoModeControls(); };
     addAndMakeVisible (fixedTempoToggle);
 
-    // MuScriptor 35-Instrument Dropdown List ("What instruments are there in this track?")
     instrumentDropdown.setTextWhenNothingSelected ("Add an instrument... (all 35 MuScriptor instruments)");
     instrumentDropdown.addItemList (MIDIstudioAudioProcessor::getMuscriptorInstruments(), 1);
     instrumentDropdown.onChange = [this] {
         const auto chosen = instrumentDropdown.getText();
-        if (chosen.isNotEmpty() && !proc.strictInstrumentWhitelist.contains (chosen))
-            proc.strictInstrumentWhitelist.add (chosen);
+        if (chosen.isNotEmpty() && !proc.strictInstrumentWhitelist.contains (chosen)) proc.strictInstrumentWhitelist.add (chosen);
         instrumentDropdown.setSelectedId (0, juce::dontSendNotification);
         updateInstrumentWhitelistDisplay();
     };
@@ -288,11 +321,12 @@ MIDIstudioAudioProcessorEditor::MIDIstudioAudioProcessorEditor (MIDIstudioAudioP
     scaleBox.addItemList ({ "Minor", "Major", "Dorian", "Mixolydian", "Harmonic Minor", "Pentatonic Minor" }, 1);
     addAndMakeVisible (meterBox); addAndMakeVisible (keyBox); addAndMakeVisible (scaleBox);
 
+    downloadMenuBtn.onClick = [this] { showDownloadPopupMenu(); };
     splitZipBtn.onClick = [this] {
         fileChooser = std::make_unique<juce::FileChooser> ("Export DAW-Ready Split Layers (.ZIP)", juce::File::getSpecialLocation (juce::File::userDesktopDirectory).getChildFile (proc.sessionName + "_DAW_Layers.zip"), "*.zip");
         fileChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc) { proc.exportSplitLayersZip (fc.getResult()); });
     };
-    addAndMakeVisible (splitZipBtn);
+    addAndMakeVisible (downloadMenuBtn); addAndMakeVisible (splitZipBtn);
 
     mixAtt       = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (proc.apvts, "mix", mixKnob);
     quantAtt     = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (proc.apvts, "quantizeStrength", quantizeKnob);
@@ -309,6 +343,32 @@ MIDIstudioAudioProcessorEditor::MIDIstudioAudioProcessorEditor (MIDIstudioAudioP
 }
 
 MIDIstudioAudioProcessorEditor::~MIDIstudioAudioProcessorEditor() { setLookAndFeel (nullptr); }
+
+void MIDIstudioAudioProcessorEditor::showDownloadPopupMenu()
+{
+    juce::PopupMenu menu;
+    menu.addItem (1, "MIDI file...");
+    menu.addItem (2, "WAV - transcription only");
+    menu.addItem (3, "WAV - stereo with original");
+    menu.addItem (4, "Sheet music");
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&downloadMenuBtn), [this] (int choice) {
+        const auto desktop = juce::File::getSpecialLocation (juce::File::userDesktopDirectory);
+        if (choice == 1) {
+            fileChooser = std::make_unique<juce::FileChooser> ("Save MIDI File", desktop.getChildFile (proc.sessionName + ".mid"), "*.mid");
+            fileChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc) { proc.exportFullMidi (fc.getResult()); });
+        } else if (choice == 2) {
+            fileChooser = std::make_unique<juce::FileChooser> ("Save WAV (Transcription Only)", desktop.getChildFile (proc.sessionName + "_midi.wav"), "*.wav");
+            fileChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc) { proc.exportWavFile (fc.getResult(), false); });
+        } else if (choice == 3) {
+            fileChooser = std::make_unique<juce::FileChooser> ("Save WAV (Stereo with Original)", desktop.getChildFile (proc.sessionName + "_stereo_audit.wav"), "*.wav");
+            fileChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc) { proc.exportWavFile (fc.getResult(), true); });
+        } else if (choice == 4) {
+            fileChooser = std::make_unique<juce::FileChooser> ("Save Sheet Music", desktop.getChildFile (proc.sessionName + "_sheets.zip"), "*.zip;*.musicxml");
+            fileChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc) { proc.exportSheetMusic (fc.getResult()); });
+        }
+    });
+}
 
 bool MIDIstudioAudioProcessorEditor::keyPressed (const juce::KeyPress& key, juce::Component*)
 {
@@ -344,6 +404,7 @@ void MIDIstudioAudioProcessorEditor::rebuildTrackListUI()
 {
     trackRows.clear();
     const juce::ScopedLock sl (proc.stateLock);
+    lastTrackCount = proc.tracks.size();
     int y = 4;
     for (size_t i = 0; i < proc.tracks.size(); ++i) {
         auto* row = new TrackRowComponent (
@@ -361,41 +422,37 @@ void MIDIstudioAudioProcessorEditor::timerCallback()
 {
     const double s = proc.playheadSec.load();
     timeLabel.setText (juce::String::formatted ("%02d:%04.1fs", static_cast<int> (s / 60.0), std::fmod (s, 60.0)), juce::dontSendNotification);
+    size_t currentTracks = 0;
     {
         const juce::ScopedLock sl (proc.stateLock);
         statusLabel.setText (proc.statusMessage, juce::dontSendNotification);
+        currentTracks = proc.tracks.size();
     }
-    if (proc.isPlaying.load()) pianoRoll.repaint();
+    if (currentTracks != lastTrackCount) rebuildTrackListUI();
+    if (proc.isPlaying.load() || proc.isTranscribing.load()) pianoRoll.repaint();
 }
 
 void MIDIstudioAudioProcessorEditor::paint (juce::Graphics& g)
 {
-    // Chamfered Brushed Champagne-Gold Hardware Chassis
     auto outer = getLocalBounds().toFloat();
     g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff6e2ba), 0.0f, 0.0f, juce::Colour (0xff6e4f26), outer.getWidth(), outer.getHeight(), false));
     g.fillRoundedRectangle (outer, 16.0f);
-
     auto face = outer.reduced (4.0f);
     g.setGradientFill (juce::ColourGradient (juce::Colour (0xffe8cda2), 0.0f, face.getY(), juce::Colour (0xffa8834b), 0.0f, face.getBottom(), false));
     g.fillRoundedRectangle (face, 13.0f);
-
-    // Subtle horizontal brushed-metal texture lines
     g.setColour (juce::Colour (0x08281808));
     for (int y = 6; y < getHeight() - 6; y += 3) g.drawHorizontalLine (y, 6.0f, static_cast<float> (getWidth() - 6));
 
-    // Top-left Engraved Brand Header
     g.setColour (juce::Colour (0xff5b3f1a));
     g.setFont (juce::FontOptions ("Georgia", 30.0f, juce::Font::bold | juce::Font::italic));
     g.drawText ("MIDIstudio", 20, 10, 178, 36, juce::Justification::centredLeft);
     g.setFont (juce::FontOptions (11.5f, juce::Font::bold));
     g.drawText ("by solaraudio", 20, 42, 148, 16, juce::Justification::centredRight);
 
-    // Recessed Dark OLED Top Transport Console
     auto oled = juce::Rectangle<float> (200.0f, 12.0f, static_cast<float> (getWidth()) - 530.0f, 52.0f);
     g.setColour (juce::Colour (0xff120e0a)); g.fillRoundedRectangle (oled, 9.0f);
     g.setColour (juce::Colour (0xff4e381d)); g.drawRoundedRectangle (oled, 9.0f, 1.5f);
 
-    // Recessed Dark Instrument Whitelist Strip
     auto strip = juce::Rectangle<float> (16.0f, 72.0f, static_cast<float> (getWidth()) - 32.0f, 36.0f);
     g.setColour (juce::Colour (0xe618110a)); g.fillRoundedRectangle (strip, 8.0f);
     g.setColour (juce::Colour (0xff543d20)); g.drawRoundedRectangle (strip, 8.0f, 1.2f);
@@ -404,8 +461,6 @@ void MIDIstudioAudioProcessorEditor::paint (juce::Graphics& g)
 void MIDIstudioAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds().reduced (16);
-
-    // Top Bar
     auto topBar = area.removeFromTop (52);
     topBar.removeFromLeft (188);
     auto topRight = topBar.removeFromRight (312);
@@ -423,8 +478,6 @@ void MIDIstudioAudioProcessorEditor::resized()
     timeLabel.setBounds (topBar.reduced (6, 8));
 
     area.removeFromTop (6);
-
-    // MuScriptor 35-Instrument Dropdown Strip ("What instruments are there in this track?")
     auto filterRow = area.removeFromTop (36).reduced (6, 4);
     fixedTempoToggle.setBounds (filterRow.removeFromRight (138).reduced (2, 0));
     transcribeAnotherBtn.setBounds (filterRow.removeFromRight (132).reduced (2, 0));
@@ -433,32 +486,32 @@ void MIDIstudioAudioProcessorEditor::resized()
     whitelistLabel.setBounds (filterRow.reduced (6, 0));
 
     area.removeFromTop (6);
-
-    // Bottom Brushed-Gold Hardware Deck
     auto bottom = area.removeFromBottom (94);
-    auto mixCol = bottom.removeFromLeft (120);
+    auto mixCol = bottom.removeFromLeft (118);
     mixLabel.setBounds (mixCol.removeFromTop (16));
     mixKnob.setBounds (mixCol.removeFromTop (56).reduced (12, 0));
     stereoAuditBtn.setBounds (mixCol.reduced (16, 0));
 
-    auto quantCol = bottom.removeFromLeft (112);
+    auto quantCol = bottom.removeFromLeft (108);
     quantLabel.setBounds (quantCol.removeFromTop (16));
     quantizeKnob.setBounds (quantCol.removeFromTop (56).reduced (10, 0));
 
-    halfTempoBtn.setBounds (bottom.removeFromLeft (46).reduced (3, 28));
-    doubleTempoBtn.setBounds (bottom.removeFromLeft (46).reduced (3, 28));
+    halfTempoBtn.setBounds (bottom.removeFromLeft (44).reduced (3, 28));
+    doubleTempoBtn.setBounds (bottom.removeFromLeft (44).reduced (3, 28));
 
-    auto tempoSlot = bottom.removeFromLeft (134).reduced (4, 8);
+    auto tempoSlot = bottom.removeFromLeft (130).reduced (4, 8);
     bpmCaption.setBounds (tempoSlot.removeFromTop (14));
     if (fixedTempoToggle.getToggleState()) { fixedBpmInput.setBounds (tempoSlot.removeFromTop (32).reduced (2)); resetTempoBtn.setBounds (tempoSlot.reduced (2)); }
     else { atPlayheadBtn.setBounds (tempoSlot.removeFromTop (34).reduced (2)); fixedBpmInput.setBounds (tempoSlot.reduced (2)); }
 
-    splitZipBtn.setBounds (bottom.removeFromRight (205).reduced (4, 18));
-    meterBox.setBounds (bottom.removeFromLeft (68).reduced (3, 26));
-    keyBox.setBounds (bottom.removeFromLeft (64).reduced (3, 26));
-    scaleBox.setBounds (bottom.removeFromLeft (122).reduced (3, 26));
+    auto dlCol = bottom.removeFromRight (210).reduced (4, 6);
+    downloadMenuBtn.setBounds (dlCol.removeFromTop (28).reduced (2, 1));
+    splitZipBtn.setBounds (dlCol.reduced (2, 3));
 
-    // Main Dark Screen: Piano Roll + Right Mixer
+    meterBox.setBounds (bottom.removeFromLeft (66).reduced (3, 26));
+    keyBox.setBounds (bottom.removeFromLeft (60).reduced (3, 26));
+    scaleBox.setBounds (bottom.removeFromLeft (115).reduced (3, 26));
+
     auto rightMixer = area.removeFromRight (282);
     trackViewport.setBounds (rightMixer.reduced (3));
     auto prTools = area.removeFromTop (30);
