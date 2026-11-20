@@ -345,8 +345,8 @@ for (const auto& base : bases) {
                 }
                 std::map<std::pair<juce::String, int>, double> activeStarts;
                 juce::String pendingLine;
-                char buf[4096];
-
+                char buf[256];
+juce::String currentEventName;
                 while (!stream->isExhausted()) {
                     const int n = stream->read (buf, sizeof (buf));
                     if (n <= 0) break;
@@ -355,19 +355,21 @@ for (const auto& base : bases) {
                     while (pendingLine.contains ("\n")) {
                         const auto line = pendingLine.upToFirstOccurrenceOf ("\n", false, false).trim();
                         pendingLine = pendingLine.fromFirstOccurrenceOf ("\n", false, false);
+                        if (line.isEmpty()) { currentEventName.clear(); continue; }
+                        if (line.startsWith ("event:")) { currentEventName = line.fromFirstOccurrenceOf ("event:", false, false).trim(); continue; }
                         if (!line.startsWith ("data:")) continue;
                         const auto jsonText = line.fromFirstOccurrenceOf ("data:", false, false).trim();
                         const auto parsed = juce::JSON::parse (jsonText);
                         if (!parsed.isObject()) continue;
 
-                        const auto evType = parsed.getProperty ("type", "").toString();
-                        if (evType == "start" || evType == "note_on") {
+                        const auto evType = parsed.getProperty ("type", currentEventName).toString();
+                        if (parsed.hasProperty ("notes")) { if (auto* arr = parsed.getProperty ("notes", juce::var()).getArray()) { for (const auto& nv : *arr) { if (!nv.isObject()) continue; const auto inst = nv.getProperty ("instrument", "piano").toString(); const int prog = static_cast<int> (nv.getProperty ("program", 0)); const bool drum = static_cast<bool> (nv.getProperty ("is_drum", false)) || inst.containsIgnoreCase ("drum"); const int pitch = static_cast<int> (nv.getProperty ("pitch", 60)); const double start = static_cast<double> (nv.getProperty ("start", nv.getProperty ("time", 0.0))); const double dur = static_cast<double> (nv.getProperty ("duration", nv.getProperty ("dur", 0.25))); const int vel = static_cast<int> (nv.getProperty ("velocity", nv.getProperty ("vel", 96))); appendStreamedNote (inst, prog, drum, pitch, start, dur, vel); } } } if (evType == "start" || evType == "note_on" || evType == "note") {
                             const auto inst = parsed.getProperty ("instrument", "piano").toString();
                             const int pitch = static_cast<int> (parsed.getProperty ("pitch", 60));
                             const double t = static_cast<double> (parsed.getProperty ("time", 0.0));
                             const bool drum = static_cast<bool> (parsed.getProperty ("is_drum", false)) || inst.containsIgnoreCase ("drum");
-                            if (drum) appendStreamedNote (inst, 0, true, pitch, t, 0.18, 105);
-                            else activeStarts[{ inst, pitch }] = t;
+                            const int prog = static_cast<int> (parsed.getProperty ("program", 0)); const double dur = static_cast<double> (parsed.getProperty ("duration", parsed.getProperty ("dur", 0.18))); const int vel = static_cast<int> (parsed.getProperty ("velocity", parsed.getProperty ("vel", drum ? 105 : 96))); appendStreamedNote (inst, prog, drum, pitch, t, dur, vel);
+                            if (!drum) activeStarts[{ inst, pitch }] = t;
                             transcribeProcessedSec.store (std::max (transcribeProcessedSec.load(), t));
                         } else if (evType == "end" || evType == "note_off") {
                             const auto inst = parsed.getProperty ("instrument", "piano").toString();
@@ -376,7 +378,7 @@ for (const auto& base : bases) {
                             const int prog = static_cast<int> (parsed.getProperty ("program", 0));
                             auto it = activeStarts.find ({ inst, pitch });
                             if (it != activeStarts.end()) {
-                                appendStreamedNote (inst, prog, false, pitch, it->second, std::max (0.06, t - it->second), 100);
+                                (void) prog; { const juce::ScopedLock sl (stateLock); for (auto& trk : tracks) { if (trk.name.equalsIgnoreCase (inst)) { for (int ni = (int) trk.notes.size() - 1; ni >= 0; --ni) { if (trk.notes[(size_t) ni].pitch == pitch) { trk.notes[(size_t) ni].durSec = std::max (0.06, t - trk.notes[(size_t) ni].startSec); break; } } break; } } durationSec.store (std::max (durationSec.load(), t + 0.5)); }
                                 activeStarts.erase (it);
                             }
                             transcribeProcessedSec.store (std::max (transcribeProcessedSec.load(), t));
