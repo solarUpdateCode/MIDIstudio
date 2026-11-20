@@ -4,6 +4,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include <vector>
 #include <atomic>
+#include <functional>
 
 struct MidiNoteItem { int id = 0; int pitch = 60; double startSec = 0.0; double durSec = 0.5; int velocity = 100; };
 struct InstrumentTrack {
@@ -41,20 +42,25 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+    static const juce::StringArray& getMuscriptorInstruments();
 
     juce::AudioProcessorValueTreeState apvts;
     juce::CriticalSection stateLock;
     juce::String sessionName { "Session_01" };
+    juce::String statusMessage { "Clean Roll - Ready" };
+    juce::File loadedAudioFile;
     std::vector<InstrumentTrack> tracks;
     std::vector<ChordMarker> chords;
     juce::StringArray strictInstrumentWhitelist;
     std::atomic<bool> isPlaying { false };
+    std::atomic<bool> isTranscribing { false };
     std::atomic<double> playheadSec { 0.0 }, durationSec { 16.0 }, detectedBpm { 122.5 }, barOffsetSec { 0.0 };
     bool splitDrums = true, includeChords = true, tplTrackNum = true, tplBpm = true, tplKey = false;
-    int loopStartBar = 0, loopEndBar = 0;
 
     void clearSessionToCleanRoll();
     bool loadAudioOrMidiFile (const juce::File& file);
+    bool loadMidiFromMemory (const juce::MemoryBlock& midiBytes, const juce::String& title);
+    void startMuscriptorTranscription (std::function<void(bool, juce::String)> onFinished);
     void detectKeyAndChords();
     void removeGhostNotes();
     void transposeTrack (int trackIndex, int semitones);
