@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-VERSION="1.0.2"
+VERSION="1.0.3"
 ARTEFACTS="build/MIDIstudio_artefacts/Release"
 STAGE="installer/macos/stage"
 OUT="MIDIstudio-${VERSION}-macOS-Installer.pkg"
