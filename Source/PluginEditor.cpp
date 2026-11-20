@@ -130,6 +130,7 @@ void PianoRollComponent::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0xff15100b)); g.fillRect (chordStrip);
     g.setColour (juce::Colour (0xff342718)); g.drawHorizontalLine (chordStrip.getBottom() - 1, 0.0f, static_cast<float> (getWidth()));
     auto keysArea = bounds.removeFromLeft (48);
+        const double visibleSec = std::max (2.0, static_cast<double> (bounds.getWidth()) / kPxPerSec); if (followPlayhead && proc.isPlaying.load()) { const double ph = proc.playheadSec.load(); if (ph > scrollOffsetSec + visibleSec * 0.72 || ph < scrollOffsetSec) scrollOffsetSec = std::max (0.0, ph - visibleSec * 0.22); } else if (proc.isTranscribing.load()) { const double gen = proc.transcribeProcessedSec.load(); if (gen > scrollOffsetSec + visibleSec * 0.85) scrollOffsetSec = std::max (0.0, gen - visibleSec * 0.70); }
     const int numKeys = kMaxPitch - kMinPitch + 1;
     const float rowH = static_cast<float> (bounds.getHeight()) / static_cast<float> (numKeys);
 
@@ -145,20 +146,21 @@ void PianoRollComponent::paint (juce::Graphics& g)
 
     const double beatSec = 60.0 / std::max (20.0, proc.getEffectiveBpm());
     const int bpb = proc.getBeatsPerBar();
-    for (int b = 0; b * beatSec < 40.0; ++b) {
-        float x = bounds.getX() + static_cast<float> ((proc.barOffsetSec.load() + b * beatSec) * kPxPerSec);
+        g.saveState(); g.reduceClipRegion (bounds);
+    for (int b = 0; b * beatSec < 40.0 + scrollOffsetSec + visibleSec; ++b) {
+        float x = bounds.getX() + static_cast<float> ((proc.barOffsetSec.load() + b * beatSec - scrollOffsetSec) * kPxPerSec);
         if (x > bounds.getRight()) break;
         g.setColour ((b % bpb == 0) ? juce::Colour (0x44ffc873) : juce::Colour (0x14ffc873));
         g.drawVerticalLine (juce::roundToInt (x), static_cast<float> (bounds.getY()), static_cast<float> (bounds.getBottom()));
     }
-
+    g.restoreState();
     const juce::ScopedLock sl (proc.stateLock);
     for (const auto& c : proc.chords) {
-        float cx = bounds.getX() + static_cast<float> (c.startSec * kPxPerSec);
+        float cx = bounds.getX() + static_cast<float> ((c.startSec - scrollOffsetSec) * kPxPerSec);
         g.setColour (juce::Colour (0xffffd98a)); g.setFont (juce::FontOptions (11.5f, juce::Font::bold));
         g.drawText (c.symbol, juce::roundToInt (cx) + 4, chordStrip.getY(), 60, chordStrip.getHeight(), juce::Justification::centredLeft);
     }
-
+    g.saveState(); g.reduceClipRegion (bounds);
     if (proc.tracks.empty()) {
         g.setColour (juce::Colour (0x88ffd98a)); g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
         g.drawText (proc.isTranscribing.load() ? proc.statusMessage : "Clean Piano Roll - Drop audio or click LOAD AUDIO -> START TRANSCRIBE", bounds, juce::Justification::centred);
@@ -168,7 +170,7 @@ void PianoRollComponent::paint (juce::Graphics& g)
             const auto& trk = proc.tracks[ti]; if (!proc.isTrackAudible (trk)) continue;
             for (const auto& n : trk.notes) {
                 if (n.pitch < kMinPitch || n.pitch > kMaxPitch) continue;
-                float x = bounds.getX() + static_cast<float> (n.startSec * tempoRatio * kPxPerSec);
+                float x = bounds.getX() + static_cast<float> ((n.startSec * tempoRatio  - scrollOffsetSec)* kPxPerSec);
                 float w = std::max (7.0f, static_cast<float> (n.durSec * tempoRatio * kPxPerSec));
                 float y = bounds.getY() + (kMaxPitch - n.pitch) * rowH + 1.0f;
                 float nh = std::max (5.0f, rowH - 2.0f);
@@ -181,18 +183,25 @@ void PianoRollComponent::paint (juce::Graphics& g)
             }
         }
     }
-    const float px = bounds.getX() + static_cast<float> (proc.playheadSec.load() * kPxPerSec);
+        if (proc.isTranscribing.load()) {
+            const float genX = bounds.getX() + static_cast<float> ((proc.transcribeProcessedSec.load() - scrollOffsetSec) * kPxPerSec);
+            if (genX < bounds.getRight()) { const float vx = std::max (static_cast<float> (bounds.getX()), genX); g.setColour (juce::Colour (0x55000000)); g.fillRect (vx, static_cast<float> (bounds.getY()), static_cast<float> (bounds.getRight()) - vx, static_cast<float> (bounds.getHeight())); }
+            if (genX >= bounds.getX() && genX <= bounds.getRight()) { g.setColour (juce::Colour (0x5588ffd9)); g.fillRect (genX - 3.0f, static_cast<float> (bounds.getY()), 6.0f, static_cast<float> (bounds.getHeight())); g.setColour (juce::Colour (0xffffd98a)); g.drawVerticalLine (juce::roundToInt (genX), static_cast<float> (bounds.getY()), static_cast<float> (bounds.getBottom())); }
+        }
+    const float px = bounds.getX() + static_cast<float> ((proc.playheadSec.load() - scrollOffsetSec) * kPxPerSec);
     g.setColour (juce::Colour (0xffffd98a));
     g.drawVerticalLine (juce::roundToInt (px), static_cast<float> (bounds.getY()), static_cast<float> (bounds.getBottom()));
     juce::Path tri; tri.addTriangle (px - 5.0f, static_cast<float> (bounds.getY()), px + 5.0f, static_cast<float> (bounds.getY()), px, static_cast<float> (bounds.getY()) + 7.0f);
     g.fillPath (tri);
+        g.restoreState();
 }
+
 
 void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
 {
     auto bounds = getLocalBounds(); bounds.removeFromBottom (26); bounds.removeFromTop (24); bounds.removeFromLeft (48);
     if (!bounds.contains (e.getPosition())) return;
-    const double sec = std::max (0.0, static_cast<double> (e.x - bounds.getX()) / kPxPerSec);
+    const double sec = std::max (0.0, scrollOffsetSec + static_cast<double> (e.x - bounds.getX()) / kPxPerSec);
     if (!drawMode) { proc.playheadSec.store (sec); repaint(); return; }
     const int numKeys = kMaxPitch - kMinPitch + 1;
     const float rowH = static_cast<float> (bounds.getHeight()) / static_cast<float> (numKeys);
@@ -201,6 +210,12 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     if (proc.tracks.empty()) { InstrumentTrack t; t.id = "trk_1"; t.name = "midi track 1"; proc.tracks.push_back (t); selectedTrackIdx = 0; }
     auto& trk = proc.tracks[juce::jlimit (0, static_cast<int> (proc.tracks.size()) - 1, selectedTrackIdx)];
     trk.notes.push_back ({ static_cast<int> (trk.notes.size()) + 1, pitch, sec, 0.5, 105 });
+    repaint();
+}
+void PianoRollComponent::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& wheel)
+{
+    const double delta = (std::abs (wheel.deltaX) > std::abs (wheel.deltaY) ? -wheel.deltaX : -wheel.deltaY) * 3.5;
+    scrollOffsetSec = juce::jlimit (0.0, std::max (0.0, proc.durationSec.load() - 2.0), scrollOffsetSec + delta);
     repaint();
 }
 
@@ -243,8 +258,9 @@ MIDIstudioAudioProcessorEditor::MIDIstudioAudioProcessorEditor (MIDIstudioAudioP
 
     playBtn.onClick = [this] { proc.isPlaying.store (true); };
     pauseBtn.onClick = [this] { proc.isPlaying.store (false); };
-    stopBtn.onClick = [this] { proc.isPlaying.store (false); proc.playheadSec.store (0.0); };
+    stopBtn.onClick = [this] { proc.isPlaying.store (false); proc.playheadSec.store (0.0); pianoRoll.scrollOffsetSec = 0.0; };
     followPlayheadBtn.setToggleState (true, juce::dontSendNotification);
+        followPlayheadBtn.onClick = [this] { pianoRoll.followPlayhead = followPlayheadBtn.getToggleState(); };
     addAndMakeVisible (playBtn); addAndMakeVisible (pauseBtn); addAndMakeVisible (stopBtn); addAndMakeVisible (followPlayheadBtn);
 
     timeLabel.setColour (juce::Label::textColourId, juce::Colour (0xffffd98a));
