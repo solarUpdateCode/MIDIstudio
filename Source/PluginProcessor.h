@@ -52,9 +52,11 @@ public:
     std::vector<InstrumentTrack> tracks;
     std::vector<ChordMarker> chords;
     juce::StringArray strictInstrumentWhitelist;
+
     std::atomic<bool> isPlaying { false };
     std::atomic<bool> isTranscribing { false };
     std::atomic<double> playheadSec { 0.0 }, durationSec { 16.0 }, detectedBpm { 122.5 }, barOffsetSec { 0.0 };
+    std::atomic<double> transcribeProgress { 0.0 }, transcribeProcessedSec { 0.0 }, transcribeTotalSec { 0.0 }, transcribeEtaSec { -1.0 };
     bool splitDrums = true, includeChords = true, tplTrackNum = true, tplBpm = true, tplKey = false;
 
     void clearSessionToCleanRoll();
@@ -71,8 +73,12 @@ public:
     juce::String getMeterString() const;
     juce::String getKeyRootString() const;
     juce::String getScaleString() const;
+
     juce::MidiFile buildSingleTrackMidiFile (const InstrumentTrack& trk, int channelIndex) const;
     juce::File writeTempDragMidiForTrack (int trackIndex) const;
+    bool exportFullMidi (const juce::File& targetFile) const;
+    bool exportWavFile (const juce::File& targetWav, bool stereoWithOriginal) const;
+    bool exportSheetMusic (const juce::File& targetFile) const;
     bool exportSplitLayersZip (const juce::File& targetZip) const;
 
 private:
@@ -83,6 +89,7 @@ private:
     juce::Random rng;
     int nextNoteId = 1;
     void triggerVoice (const InstrumentTrack& trk, const MidiNoteItem& note);
+    void appendStreamedNote (const juce::String& instName, int program, bool isDrum, int pitch, double startSec, double durSec, int vel);
     juce::String formatLayerFilename (int index, const juce::String& label) const;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MIDIstudioAudioProcessor)
 };
