@@ -33,11 +33,11 @@ async def transcribe_sse(file: UploadFile = File(...), instruments: str = Form(d
                 data=data,
                 headers={**HEADERS, "Accept": "text/event-stream"},
             ) as resp:
-                async for chunk in resp.aiter_bytes():
+                async for chunk in resp.aiter_raw():
                     if chunk:
                         yield chunk
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 @app.post("/transcribe/midi")
 async def transcribe_midi(file: UploadFile = File(...), instruments: str = Form(default="")):
