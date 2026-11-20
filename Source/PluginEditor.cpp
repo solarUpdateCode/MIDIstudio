@@ -54,17 +54,22 @@ void MIDIstudioLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Butto
 void MIDIstudioLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b, bool, bool)
 {
     auto r = b.getLocalBounds().toFloat();
-    if (b.getComponentID() == "pill") {
-        auto sw = juce::Rectangle<float> (r.getX() + 2.0f, r.getCentreY() - 9.0f, 36.0f, 18.0f);
-        g.setColour (juce::Colour (0xff2b2013)); g.fillRoundedRectangle (sw, 9.0f);
-        g.setColour (juce::Colour (0xff6b4f29)); g.drawRoundedRectangle (sw, 9.0f, 1.2f);
-        const float kx = b.getToggleState() ? sw.getRight() - 16.0f : sw.getX() + 2.0f;
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xfffff2d1), kx, sw.getY(), juce::Colour (0xff8a6531), kx + 14.0f, sw.getBottom(), false));
-        g.fillEllipse (kx, sw.getY() + 2.0f, 14.0f, 14.0f);
-        g.setColour (juce::Colour (0xff261a0c)); g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-        g.drawText (b.getButtonText(), sw.getRight() + 6.0f, r.getY(), r.getWidth() - 44.0f, r.getHeight(), juce::Justification::centredLeft);
-        return;
-    }
+   if (b.getComponentID() == "pill") {
+    const bool isFixed = b.getToggleState();
+    const float cx = r.getCentreX();
+    auto sw = juce::Rectangle<float> (cx - 18.0f, r.getCentreY() - 9.0f, 36.0f, 18.0f);
+    g.setColour (juce::Colour (0xff2b2013)); g.fillRoundedRectangle (sw, 9.0f);
+    g.setColour (juce::Colour (0xff6b4f29)); g.drawRoundedRectangle (sw, 9.0f, 1.2f);
+    const float kx = isFixed ? sw.getRight() - 16.0f : sw.getX() + 2.0f;
+    g.setGradientFill (juce::ColourGradient (juce::Colour (0xfffff2d1), kx, sw.getY(), juce::Colour (0xff8a6531), kx + 14.0f, sw.getBottom(), false));
+    g.fillEllipse (kx, sw.getY() + 2.0f, 14.0f, 14.0f);
+    g.setFont (juce::FontOptions (10.5f, juce::Font::bold));
+    g.setColour (juce::Colour (isFixed ? 0x99261a0c : 0xff261a0c));
+    g.drawText ("FOLLOW TEMPO", r.getX(), r.getY(), sw.getX() - r.getX() - 6.0f, r.getHeight(), juce::Justification::centredRight);
+    g.setColour (juce::Colour (isFixed ? 0xff261a0c : 0x99261a0c));
+    g.drawText ("FIXED TEMPO", sw.getRight() + 6.0f, r.getY(), r.getRight() - sw.getRight() - 6.0f, r.getHeight(), juce::Justification::centredLeft);
+    return;
+   }
     auto box = juce::Rectangle<float> (r.getX() + 2.0f, r.getCentreY() - 7.0f, 14.0f, 14.0f);
     g.setColour (b.getToggleState() ? juce::Colour (0xffffb84d) : juce::Colour (0xff1a130c));
     g.fillRoundedRectangle (box, 3.0f);
@@ -456,6 +461,9 @@ void MIDIstudioAudioProcessorEditor::paint (juce::Graphics& g)
     auto strip = juce::Rectangle<float> (16.0f, 72.0f, static_cast<float> (getWidth()) - 32.0f, 36.0f);
     g.setColour (juce::Colour (0xe618110a)); g.fillRoundedRectangle (strip, 8.0f);
     g.setColour (juce::Colour (0xff543d20)); g.drawRoundedRectangle (strip, 8.0f, 1.2f);
+auto bottomOled = meterBox.getBounds().getUnion (scaleBox.getBounds()).toFloat().expanded (6.0f, 5.0f);
+g.setColour (juce::Colour (0xff120e0a)); g.fillRoundedRectangle (bottomOled, 8.0f);
+g.setColour (juce::Colour (0xff4e381d)); g.drawRoundedRectangle (bottomOled, 8.0f, 1.5f);
 }
 
 void MIDIstudioAudioProcessorEditor::resized()
@@ -464,9 +472,11 @@ void MIDIstudioAudioProcessorEditor::resized()
     auto topBar = area.removeFromTop (52);
     topBar.removeFromLeft (188);
     auto topRight = topBar.removeFromRight (312);
-    loadAudioBtn.setBounds (topRight.removeFromLeft (90).reduced (2, 8));
-    startTranscribeBtn.setBounds (topRight.removeFromLeft (124).reduced (2, 8));
-    exportLayersBtn.setBounds (topRight.reduced (2, 8));
+auto topBtns = topRight.removeFromTop (30);
+loadAudioBtn.setBounds (topBtns.removeFromLeft (90).reduced (2, 2));
+startTranscribeBtn.setBounds (topBtns.removeFromLeft (124).reduced (2, 2));
+exportLayersBtn.setBounds (topBtns.reduced (2, 2));
+fixedTempoToggle.setBounds (topRight.withSizeKeepingCentre (250, 22));
 
     auto oledLeft = topBar.removeFromLeft (145);
     sessionNameEditor.setBounds (oledLeft.removeFromTop (26).reduced (4, 2));
@@ -479,7 +489,7 @@ void MIDIstudioAudioProcessorEditor::resized()
 
     area.removeFromTop (6);
     auto filterRow = area.removeFromTop (36).reduced (6, 4);
-    fixedTempoToggle.setBounds (filterRow.removeFromRight (138).reduced (2, 0));
+
     transcribeAnotherBtn.setBounds (filterRow.removeFromRight (132).reduced (2, 0));
     clearFilterBtn.setBounds (filterRow.removeFromRight (58).reduced (2, 0));
     instrumentDropdown.setBounds (filterRow.removeFromLeft (280).reduced (2, 0));
