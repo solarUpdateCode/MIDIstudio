@@ -282,7 +282,7 @@ void MIDIstudioAudioProcessor::startMuscriptorTranscription (std::function<void(
         const juce::ScopedLock sl (stateLock);
         tracks.clear();
         chords.clear();
-        statusMessage = "Connecting to muscriptor.kyutai.org...";
+        statusMessage = "Connecting to server...";
     }
     transcribeProgress.store (0.02);
     transcribeProcessedSec.store (0.0);
@@ -302,13 +302,13 @@ void MIDIstudioAudioProcessor::startMuscriptorTranscription (std::function<void(
                            .withStatusCode (&statusCode);
 
         bool ok = false;
-        juce::String msg = "Could not connect to muscriptor.kyutai.org";
+        juce::String msg = "Could not connect to server";
 
         if (auto stream = sseUrl.createInputStream (options)) {
             if (statusCode == 200) {
                 {
                     const juce::ScopedLock sl (stateLock);
-                    statusMessage = "Connected - streaming MIDI from muscriptor.kyutai.org...";
+                    statusMessage = "Connected - generating MIDI on piano roll...";
                 }
                 std::map<std::pair<juce::String, int>, double> activeStarts;
                 juce::String pendingLine;
@@ -369,7 +369,7 @@ void MIDIstudioAudioProcessor::startMuscriptorTranscription (std::function<void(
                             transcribeProgress.store (1.0);
                             transcribeEtaSec.store (0.0);
                             ok = ok || !tracks.empty();
-                            msg = "Transcription complete (muscriptor.kyutai.org)";
+                            msg = "Transcription complete";
                         }
                         if (transcribeTotalSec.load() > 0.1 && transcribeProcessedSec.load() > 0.0) {
                             const double frac = juce::jlimit (0.03, 0.99, transcribeProcessedSec.load() / transcribeTotalSec.load());
@@ -385,7 +385,7 @@ void MIDIstudioAudioProcessor::startMuscriptorTranscription (std::function<void(
         if (!ok) {
             {
                 const juce::ScopedLock sl (stateLock);
-                statusMessage = "Downloading full MIDI from muscriptor.kyutai.org...";
+                statusMessage = "Generating full MIDI...";
             }
             juce::URL fallbackUrl (juce::String ("https://muscriptor.kyutai.org") + "/transcribe/midi");
             fallbackUrl = fallbackUrl.withFileToUpload ("file", audioFile, "application/octet-stream");
@@ -398,7 +398,7 @@ void MIDIstudioAudioProcessor::startMuscriptorTranscription (std::function<void(
                 fbStream->readEntireStreamAsMemoryBlock (resp);
                 if (fbCode == 200 && resp.getSize() > 14) {
                     ok = loadMidiFromMemory (resp, audioFile.getFileNameWithoutExtension());
-                    msg = ok ? "Transcribed via muscriptor.kyutai.org" : "Invalid MIDI returned by server";
+                    msg = ok ? "Transcription complete" : "Invalid MIDI returned by server";
                 } else {
                     msg = "Server HTTP " + juce::String (fbCode) + " - check internet or clip length";
                 }
