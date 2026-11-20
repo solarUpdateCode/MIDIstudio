@@ -1,0 +1,57 @@
+name: Build MIDIstudio (Windows & macOS App + VST3/AU)
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure CMake (Windows x64)
+        run: cmake -B build -A x64 -DCMAKE_BUILD_TYPE=Release
+      - name: Build VST3 and Standalone App
+        run: cmake --build build --config Release --target MIDIstudio_VST3 MIDIstudio_Standalone --parallel
+      - name: Package Windows Installer (Inno Setup)
+        run: iscc installer/windows/midistudio_setup.iss
+      - name: Upload Windows Installer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MIDIstudio-Windows-x64-Installer
+          path: installer/windows/Output/MIDIstudio-Setup-*-Win64.exe
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure CMake (macOS Universal)
+        run: cmake -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_BUILD_TYPE=Release
+      - name: Build VST3, AU and Standalone App
+        run: cmake --build build --config Release --target MIDIstudio_VST3 MIDIstudio_AU MIDIstudio_Standalone --parallel
+      - name: Package macOS Universal Installer (.pkg)
+        run: chmod +x installer/macos/build_pkg.sh && ./installer/macos/build_pkg.sh
+      - name: Upload macOS Installer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MIDIstudio-macOS-Universal-Installer
+          path: MIDIstudio-*-macOS-Installer.pkg
+
+  publish-release:
+    needs: [build-windows, build-macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-assets/MIDIstudio-Windows-x64-Installer/*.exe
+            release-assets/MIDIstudio-macOS-Universal-Installer/*.pkg
