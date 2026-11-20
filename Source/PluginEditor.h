@@ -18,9 +18,12 @@ public:
     explicit PianoRollComponent (MIDIstudioAudioProcessor& p);
     void paint (juce::Graphics& g) override;
     void mouseDown (const juce::MouseEvent& e) override;
+    void mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override;
     bool drawMode = false;
     bool highlightInKey = true;
     int selectedTrackIdx = 0;
+    bool followPlayhead = true;
+    double scrollOffsetSec = 0.0;
 private:
     MIDIstudioAudioProcessor& proc;
     static constexpr int kMinPitch = 33, kMaxPitch = 78;
