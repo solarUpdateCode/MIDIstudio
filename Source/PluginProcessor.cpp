@@ -290,20 +290,53 @@ void MIDIstudioAudioProcessor::startMuscriptorTranscription (std::function<void(
 
     std::thread ([this, audioFile, whitelist, onFinished = std::move (onFinished)]() mutable {
         const double wallStart = juce::Time::getMillisecondCounterHiRes() / 1000.0;
-        juce::String sseEndpoint = juce::String ("https://muscriptor.kyutai.org") + "/transcribe";
-        juce::URL sseUrl (sseEndpoint);
-        sseUrl = sseUrl.withFileToUpload ("file", audioFile, "application/octet-stream");
-        if (whitelist.isNotEmpty()) sseUrl = sseUrl.withParameter ("instruments", whitelist);
+       const auto ext = audioFile.getFileExtension().toLowerCase();
+    juce::String mime = "audio/wav";
+    if (ext == ".mp3") mime = "audio/mpeg";
+    else if (ext == ".flac") mime = "audio/flac";
+    else if (ext == ".ogg") mime = "audio/ogg";
+else if (ext == ".m4a") mime = "audio/mp4";
+       const juce::String localBase = juce::String ("http") + "://127.0.0.1:8222";
+const juce::String remoteBase = "https://muscriptor.kyutai.org";
 
-        int statusCode = 0;
-        auto options = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inPostData)
-                           .withConnectionTimeoutMs (240000)
-                           .withExtraHeaders ("Accept: text/event-stream\r\n")
-                           .withStatusCode (&statusCode);
+// Auto-launch local MuScriptor server if installed and not yet listening
+auto isLocalAlive = [&]() {
+    int c = 0;
+    auto s = juce::URL (localBase).createInputStream (
+        juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress).withConnectionTimeoutMs (600).withStatusCode (&c));
+    return s != nullptr && c > 0;
+};
 
+if (!isLocalAlive()) {
+   #if JUCE_WINDOWS
+    auto localBat = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getParentDirectory().getChildFile ("start_local_server.bat");
+    if (!localBat.existsAsFile()) localBat = juce::File ("C:\\Program Files\\solaraudio\\MIDIstudio\\start_local_server.bat");
+    if (localBat.existsAsFile()) localBat.startAsProcess();
+   #elif JUCE_MAC
+    juce::File localSh ("/Library/Application Support/solaraudio/MIDIstudio/start_local_server.sh");
+    if (localSh.existsAsFile()) localSh.startAsProcess();
+   #endif
+    for (int w = 0; w < 6 && !isLocalAlive(); ++w) juce::Thread::sleep (500);
+}
+
+juce::StringArray bases;
+if (isLocalAlive()) bases.add (localBase);
+bases.add (remoteBase);
+        
         bool ok = false;
         juce::String msg = "Could not connect to server";
+for (const auto& base : bases) {
+    if (ok) break;
+    juce::URL sseUrl (base + "/transcribe");
+    sseUrl = sseUrl.withFileToUpload ("file", audioFile, mime);
+    if (whitelist.isNotEmpty()) sseUrl = sseUrl.withParameter ("instruments", whitelist);
 
+    int statusCode = 0;
+    auto options = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inPostData)
+                       .withConnectionTimeoutMs (240000)
+                       .withExtraHeaders ("Accept: text/event-stream\r\nUser-Agent: Mozilla/5.0 MIDIstudio/1.0\r\n")
+                       .withStatusCode (&statusCode);
+    
         if (auto stream = sseUrl.createInputStream (options)) {
             if (statusCode == 200) {
                 {
@@ -387,24 +420,26 @@ void MIDIstudioAudioProcessor::startMuscriptorTranscription (std::function<void(
                 const juce::ScopedLock sl (stateLock);
                 statusMessage = "Generating full MIDI...";
             }
-            juce::URL fallbackUrl (juce::String ("https://muscriptor.kyutai.org") + "/transcribe/midi");
-            fallbackUrl = fallbackUrl.withFileToUpload ("file", audioFile, "application/octet-stream");
-            if (whitelist.isNotEmpty()) fallbackUrl = fallbackUrl.withParameter ("instruments", whitelist);
-            int fbCode = 0;
-            auto fbOpt = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inPostData)
-                             .withConnectionTimeoutMs (240000).withStatusCode (&fbCode);
-            if (auto fbStream = fallbackUrl.createInputStream (fbOpt)) {
-                juce::MemoryBlock resp;
-                fbStream->readIntoMemoryBlock (resp);
-                if (fbCode == 200 && resp.getSize() > 14) {
-                    ok = loadMidiFromMemory (resp, audioFile.getFileNameWithoutExtension());
-                    msg = ok ? "Transcription complete" : "Invalid MIDI returned by server";
-                } else {
-                    msg = "Server HTTP " + juce::String (fbCode) + " - check internet or clip length";
-                }
-            }
-        }
-
+          juce::URL fbUrl (base + "/transcribe/midi");
+fbUrl = fbUrl.withFileToUpload ("file", audioFile, mime);
+if (whitelist.isNotEmpty()) fbUrl = fbUrl.withParameter ("instruments", whitelist);
+int fbCode = 0;
+auto fbOpt = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inPostData)
+                 .withConnectionTimeoutMs (240000)
+                 .withExtraHeaders ("User-Agent: Mozilla/5.0 MIDIstudio/1.0\r\n")
+                 .withStatusCode (&fbCode);
+if (auto fbStream = fbUrl.createInputStream (fbOpt)) {
+    juce::MemoryBlock resp;
+    fbStream->readIntoMemoryBlock (resp);
+    if (fbCode == 200 && resp.getSize() > 14) {
+        ok = loadMidiFromMemory (resp, audioFile.getFileNameWithoutExtension());
+        msg = ok ? "Transcription complete" : "Invalid MIDI returned by server";
+    } else {
+        msg = "Server HTTP " + juce::String (fbCode) + " - start Local Server from Start Menu";
+    }
+}
+}
+        
         if (ok) transcribeProgress.store (1.0);
         isTranscribing.store (false);
         {
