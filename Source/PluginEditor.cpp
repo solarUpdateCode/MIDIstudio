@@ -18,7 +18,7 @@ MIDIstudioLookAndFeel::MIDIstudioLookAndFeel()
     setColour (juce::PopupMenu::highlightedBackgroundColourId, juce::Colour (0xff27e69b));
     setColour (juce::PopupMenu::highlightedTextColourId, juce::Colour (0xff0b0907));
     setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff120e0a));
-    setColour (juce::TextEditor::textColourId, juce::Colour (0xffffd98a));
+    setColour (juce::TextEditor::textColourId, juce::Colour (0xffffd98a)); setColour (juce::TextButton::textColourOffId, juce::Colour (0xff1c1207)); setColour (juce::TextButton::textColourOnId, juce::Colour (0xff120b03));
     setColour (juce::TextEditor::outlineColourId, juce::Colour (0xff574023));
 }
 
@@ -26,31 +26,14 @@ void MIDIstudioLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, i
 {
     const float radius = juce::jmin (w, h) * 0.43f, cx = x + w * 0.5f, cy = y + h * 0.5f;
     const float angle = startAngle + sliderPos * (endAngle - startAngle);
-    g.setColour (juce::Colour (0x88140c04));
-    g.fillEllipse (cx - radius + 1.5f, cy - radius + 4.0f, radius * 2.0f, radius * 2.0f);
-    g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff6e2ba), cx - radius, cy - radius, juce::Colour (0xff694a21), cx + radius, cy + radius, false));
-    g.fillEllipse (cx - radius, cy - radius, radius * 2.0f, radius * 2.0f);
-    g.setColour (juce::Colour (0xff3c2a13));
-    g.drawEllipse (cx - radius, cy - radius, radius * 2.0f, radius * 2.0f, 1.8f);
-    const float innerR = radius * 0.72f;
-    g.setGradientFill (juce::ColourGradient (juce::Colour (0xfffaf0d7), cx - innerR, cy - innerR, juce::Colour (0xff8a6531), cx + innerR, cy + innerR, false));
-    g.fillEllipse (cx - innerR, cy - innerR, innerR * 2.0f, innerR * 2.0f);
-    juce::Path ptr; ptr.addRoundedRectangle (-1.5f, -innerR + 2.5f, 3.0f, innerR * 0.55f, 1.2f);
-    g.setColour (juce::Colour (0xff23170a));
-    g.fillPath (ptr, juce::AffineTransform::rotation (angle).translated (cx, cy));
+    g.setColour (juce::Colour (0x99080502)); g.fillEllipse (cx - radius + 1.5f, cy - radius + 4.0f, radius * 2.0f, radius * 2.0f); g.setColour (juce::Colour (0xff2c1d0d)); g.fillEllipse (cx - radius, cy - radius, radius * 2.0f, radius * 2.0f); for (int i = 0; i < 36; ++i) { const float a = i * juce::MathConstants<float>::twoPi / 36.0f; const float rIn = radius * 0.78f, rOut = radius * 0.99f; g.setColour (i % 2 == 0 ? juce::Colour (0xff8a6531) : juce::Colour (0xff1a1007)); g.drawLine (cx + std::cos (a) * rIn, cy + std::sin (a) * rIn, cx + std::cos (a) * rOut, cy + std::sin (a) * rOut, 1.4f); } const float innerR = radius * 0.74f, pi = juce::MathConstants<float>::pi; auto drawWedge = [&] (float a0, float a1, juce::Colour col) { juce::Path p; p.addPieSegment (cx - innerR, cy - innerR, innerR * 2.0f, innerR * 2.0f, a0, a1, 0.0f); g.setColour (col); g.fillPath (p); }; drawWedge (1.5f * pi, 2.0f * pi, juce::Colour (0xfff5deb0)); drawWedge (0.5f * pi, pi, juce::Colour (0xffe8c682)); drawWedge (0.0f, 0.5f * pi, juce::Colour (0xff7d5b2b)); drawWedge (pi, 1.5f * pi, juce::Colour (0xff7d5b2b)); g.setColour (juce::Colour (0xffc9a25e)); g.drawEllipse (cx - innerR, cy - innerR, innerR * 2.0f, innerR * 2.0f, 1.2f); juce::Path ptr; ptr.addRoundedRectangle (-1.8f, -innerR + 2.5f, 3.6f, innerR * 0.58f, 1.5f); g.setColour (juce::Colour (0xff231508)); g.fillPath (ptr, juce::AffineTransform::rotation (angle).translated (cx, cy));
 }
 
 void MIDIstudioLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&, bool highlighted, bool down)
 {
-    auto r = b.getLocalBounds().toFloat().reduced (1.0f);
-    const bool goldAccent = b.getComponentID() == "gold";
-    juce::Colour top = down ? juce::Colour (0xff3a2914) : (goldAccent ? juce::Colour (0xff785626) : (highlighted ? juce::Colour (0xff6d4f29) : juce::Colour (0xff4d381c)));
-    g.setGradientFill (juce::ColourGradient (top, r.getTopLeft(), juce::Colour (0xff1a1209), r.getBottomLeft(), false));
-    g.fillRoundedRectangle (r, 7.0f);
-    g.setColour ((highlighted || goldAccent) ? juce::Colour (0xfff5d491) : juce::Colour (0xff5c4322));
-    g.drawRoundedRectangle (r, 7.0f, goldAccent ? 1.8f : 1.1f);
+     auto r = b.getLocalBounds().toFloat().reduced (1.0f); if (b.getComponentID() == "darkBtn") { g.setColour (juce::Colour (down ? 0xff140f0a : (highlighted ? 0xff2b2117 : 0xff1e1710))); g.fillRoundedRectangle (r, 6.0f); g.setColour (juce::Colour (highlighted ? 0xff8a6531 : 0xff4f3a1f)); g.drawRoundedRectangle (r, 6.0f, 1.1f); return; } g.setColour (juce::Colour (0x66060402)); g.fillRoundedRectangle (r.translated (0.0f, 2.0f), 6.0f); juce::ColourGradient grad (juce::Colour (0xff9f7d46), r.getX(), r.getY(), juce::Colour (0xff95723c), r.getRight(), r.getY(), false); grad.addColour (0.20, juce::Colour (0xffcfa96c)); grad.addColour (0.45, juce::Colour (0xfff7e4b8)); grad.addColour (0.65, juce::Colour (0xffe5c589)); grad.addColour (0.85, juce::Colour (0xffb89254)); g.setGradientFill (grad); g.fillRoundedRectangle (r, 6.0f); if (down) { g.setColour (juce::Colour (0x26120b03)); g.fillRoundedRectangle (r, 6.0f); } else if (highlighted) { g.setColour (juce::Colour (0x1afffae8)); g.fillRoundedRectangle (r, 6.0f); } g.setColour (juce::Colour (0xe8fffae8)); g.drawLine (r.getX() + 5.0f, r.getY() + 1.0f, r.getRight() - 5.0f, r.getY() + 1.0f, 1.1f); g.setColour (juce::Colour (0x994e3414)); g.drawLine (r.getX() + 5.0f, r.getBottom() - 1.0f, r.getRight() - 5.0f, r.getBottom() - 1.0f, 1.1f); g.setColour (juce::Colour (0xff35230e)); g.drawRoundedRectangle (r, 6.0f, 1.2f);
 }
-
+void MIDIstudioLookAndFeel::drawComboBox (juce::Graphics& g, int width, int height, bool isButtonDown, int buttonX, int buttonY, int buttonW, int buttonH, juce::ComboBox& box) { auto r = juce::Rectangle<float> (0.0f, 0.0f, (float) width, (float) height).reduced (1.0f); const float ax = (float) buttonX + (float) buttonW * 0.5f, ay = (float) buttonY + (float) buttonH * 0.5f; juce::Path arrow; arrow.startNewSubPath (ax - 4.0f, ay - 2.0f); arrow.lineTo (ax, ay + 2.5f); arrow.lineTo (ax + 4.0f, ay - 2.0f); if (box.getComponentID() == "goldCombo") { g.setColour (juce::Colour (0x66060402)); g.fillRoundedRectangle (r.translated (0.0f, 2.0f), 6.0f); juce::ColourGradient grad (juce::Colour (0xff9f7d46), r.getX(), r.getY(), juce::Colour (0xff95723c), r.getRight(), r.getY(), false); grad.addColour (0.20, juce::Colour (0xffcfa96c)); grad.addColour (0.45, juce::Colour (0xfff7e4b8)); grad.addColour (0.65, juce::Colour (0xffe5c589)); grad.addColour (0.85, juce::Colour (0xffb89254)); g.setGradientFill (grad); g.fillRoundedRectangle (r, 6.0f); if (isButtonDown) { g.setColour (juce::Colour (0x26120b03)); g.fillRoundedRectangle (r, 6.0f); } g.setColour (juce::Colour (0xe8fffae8)); g.drawLine (r.getX() + 5.0f, r.getY() + 1.0f, r.getRight() - 5.0f, r.getY() + 1.0f, 1.1f); g.setColour (juce::Colour (0x994e3414)); g.drawLine (r.getX() + 5.0f, r.getBottom() - 1.0f, r.getRight() - 5.0f, r.getBottom() - 1.0f, 1.1f); g.setColour (juce::Colour (0xff35230e)); g.drawRoundedRectangle (r, 6.0f, 1.2f); g.setColour (juce::Colour (0xff1c1207)); g.strokePath (arrow, juce::PathStrokeType (1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded)); } else { g.setColour (juce::Colour (0xff120e0a)); g.fillRoundedRectangle (r, 6.0f); g.setColour (juce::Colour (0xff6b4f29)); g.drawRoundedRectangle (r, 6.0f, 1.1f); g.setColour (juce::Colour (0xffd6a656)); g.strokePath (arrow, juce::PathStrokeType (1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded)); } }
 void MIDIstudioLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b, bool, bool)
 {
     auto r = b.getLocalBounds().toFloat();
@@ -228,7 +211,7 @@ namespace {
             dragBtn.setTooltip ("Drag MIDI layer directly to DAW"); dragBtn.onClick = std::move (onDrag);
             lbl.setText (name, juce::dontSendNotification); lbl.setColour (juce::Label::textColourId, juce::Colour (0xfff3e5cc));
             soloBtn.onClick = std::move (onSolo); muteBtn.onClick = std::move (onMute);
-            addAndMakeVisible (dragBtn); addAndMakeVisible (lbl); addAndMakeVisible (soloBtn); addAndMakeVisible (muteBtn);
+            addAndMakeVisible (dragBtn); addAndMakeVisible (lbl); addAndMakeVisible (soloBtn); dragBtn.setComponentID ("darkBtn"); dragBtn.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffebd6b3)); soloBtn.setComponentID ("darkBtn"); soloBtn.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffebd6b3)); muteBtn.setComponentID ("darkBtn"); muteBtn.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffebd6b3)); addAndMakeVisible (muteBtn);
         }
         void paint (juce::Graphics& g) override {
             g.setColour (juce::Colour (0xff16110c)); g.fillRect (getLocalBounds());
@@ -321,7 +304,7 @@ MIDIstudioAudioProcessorEditor::MIDIstudioAudioProcessorEditor (MIDIstudioAudioP
     addAndMakeVisible (editToolBtn); addAndMakeVisible (drawToolBtn); addAndMakeVisible (ghostBtn);
     addAndMakeVisible (octDownBtn); addAndMakeVisible (octUpBtn); addAndMakeVisible (inKeyToggle); addAndMakeVisible (pianoRoll);
 
-    trackViewport.setViewedComponent (&trackContainer, false); addAndMakeVisible (trackViewport);
+    trackViewport.setViewedComponent (&trackContainer, false); addAndMakeVisible (trackViewport); for (auto* tb : { &editToolBtn, &drawToolBtn, &ghostBtn, &octDownBtn, &octUpBtn }) { tb->setComponentID ("darkBtn"); tb->setColour (juce::TextButton::textColourOffId, juce::Colour (0xffebd6b3)); }
 
     for (auto* k : { &mixKnob, &quantizeKnob }) { k->setSliderStyle (juce::Slider::RotaryVerticalDrag); k->setTextBoxStyle (juce::Slider::TextBoxBelow, false, 68, 16); addAndMakeVisible (k); }
     for (auto* l : { &mixLabel, &quantLabel, &bpmCaption }) { l->setColour (juce::Label::textColourId, juce::Colour (0xff261a0c)); l->setFont (juce::FontOptions (11.0f, juce::Font::bold)); l->setJustificationType (juce::Justification::centred); addAndMakeVisible (l); }
@@ -340,7 +323,7 @@ MIDIstudioAudioProcessorEditor::MIDIstudioAudioProcessorEditor (MIDIstudioAudioP
     meterBox.addItemList ({ "4/4", "3/4", "6/8", "2/4", "5/4", "7/8" }, 1);
     keyBox.addItemList ({ "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" }, 1);
     scaleBox.addItemList ({ "Minor", "Major", "Dorian", "Mixolydian", "Harmonic Minor", "Pentatonic Minor" }, 1);
-    addAndMakeVisible (meterBox); addAndMakeVisible (keyBox); addAndMakeVisible (scaleBox);
+    addAndMakeVisible (meterBox); addAndMakeVisible (keyBox); addAndMakeVisible (sc for (auto* cb : { &meterBox, &keyBox, &scaleBox }) { cb->setComponentID ("goldCombo"); cb->setColour (juce::ComboBox::textColourId, juce::Colour (0xff1c1207)); }aleBox);
 
     downloadMenuBtn.onClick = [this] { showDownloadPopupMenu(); };
     splitZipBtn.onClick = [this] {
