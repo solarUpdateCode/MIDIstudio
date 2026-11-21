@@ -1,11 +1,11 @@
 [Setup]
 AppName=MIDIstudio by solaraudio
-AppVersion=1.0.4
+AppVersion=1.0.5
 AppPublisher=solaraudio
 AppPublisherURL=https://github.com/solarUpdateCode/MIDIstudio
 DefaultDirName={autopf}\solaraudio\MIDIstudio
 DefaultGroupName=solaraudio\MIDIstudio
-OutputBaseFilename=MIDIstudio-Setup-1.0.4-Win64
+OutputBaseFilename=MIDIstudio-Setup-1.0.5-Win64
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
