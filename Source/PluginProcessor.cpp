@@ -343,7 +343,7 @@ for (const auto& base : bases) {
                     const juce::ScopedLock sl (stateLock);
                     statusMessage = "Connected - generating MIDI on piano roll...";
                 }
-                std::map<std::pair<juce::String, int>, double> activeStarts;
+                std::map<int, std::pair<size_t, size_t>> indexToNote;
                 juce::String pendingLine;
                 char buf[256];
 juce::String currentEventName;
@@ -363,49 +363,9 @@ juce::String currentEventName;
                         if (!parsed.isObject()) continue;
 
                         const auto evType = parsed.getProperty ("type", currentEventName).toString();
-                        if (parsed.hasProperty ("notes")) { if (auto* arr = parsed.getProperty ("notes", juce::var()).getArray()) { for (const auto& nv : *arr) { if (!nv.isObject()) continue; const auto inst = nv.getProperty ("instrument", "piano").toString(); const int prog = static_cast<int> (nv.getProperty ("program", 0)); const bool drum = static_cast<bool> (nv.getProperty ("is_drum", false)) || inst.containsIgnoreCase ("drum"); const int pitch = static_cast<int> (nv.getProperty ("pitch", 60)); const double start = static_cast<double> (nv.getProperty ("start", nv.getProperty ("time", 0.0))); const double dur = static_cast<double> (nv.getProperty ("duration", nv.getProperty ("dur", 0.25))); const int vel = static_cast<int> (nv.getProperty ("velocity", nv.getProperty ("vel", 96))); appendStreamedNote (inst, prog, drum, pitch, start, dur, vel); } } } if (evType == "start" || evType == "note_on" || evType == "note") {
-                            const auto inst = parsed.getProperty ("instrument", "piano").toString();
-                            const int pitch = static_cast<int> (parsed.getProperty ("pitch", 60));
-                            const double t = static_cast<double> (parsed.getProperty ("time", 0.0));
-                            const bool drum = static_cast<bool> (parsed.getProperty ("is_drum", false)) || inst.containsIgnoreCase ("drum");
-                            const int prog = static_cast<int> (parsed.getProperty ("program", 0)); const double dur = static_cast<double> (parsed.getProperty ("duration", parsed.getProperty ("dur", 0.18))); const int vel = static_cast<int> (parsed.getProperty ("velocity", parsed.getProperty ("vel", drum ? 105 : 96))); appendStreamedNote (inst, prog, drum, pitch, t, dur, vel);
-                            if (!drum) activeStarts[{ inst, pitch }] = t;
-                            transcribeProcessedSec.store (std::max (transcribeProcessedSec.load(), t));
-                        } else if (evType == "end" || evType == "note_off") {
-                            const auto inst = parsed.getProperty ("instrument", "piano").toString();
-                            const int pitch = static_cast<int> (parsed.getProperty ("pitch", 60));
-                            const double t = static_cast<double> (parsed.getProperty ("time", 0.0));
-                            const int prog = static_cast<int> (parsed.getProperty ("program", 0));
-                            auto it = activeStarts.find ({ inst, pitch });
-                            if (it != activeStarts.end()) {
-                                (void) prog; { const juce::ScopedLock sl (stateLock); for (auto& trk : tracks) { if (trk.name.equalsIgnoreCase (inst)) { for (int ni = (int) trk.notes.size() - 1; ni >= 0; --ni) { if (trk.notes[(size_t) ni].pitch == pitch) { trk.notes[(size_t) ni].durSec = std::max (0.06, t - trk.notes[(size_t) ni].startSec); break; } } break; } } durationSec.store (std::max (durationSec.load(), t + 0.5)); }
-                                activeStarts.erase (it);
-                            }
-                            transcribeProcessedSec.store (std::max (transcribeProcessedSec.load(), t));
-                        } else if (evType == "progress") {
-                            const double procS = static_cast<double> (parsed.getProperty ("processed_seconds", parsed.getProperty ("time", transcribeProcessedSec.load())));
-                            const double totS  = static_cast<double> (parsed.getProperty ("total_seconds", transcribeTotalSec.load()));
-                            if (totS > 0.1) transcribeTotalSec.store (totS);
-                            transcribeProcessedSec.store (procS);
-                            const double total = std::max (1.0, transcribeTotalSec.load());
-                            const double frac = juce::jlimit (0.02, 0.99, procS / total);
-                            transcribeProgress.store (frac);
-                            const double elapsed = (juce::Time::getMillisecondCounterHiRes() / 1000.0) - wallStart;
-                            if (frac > 0.05) transcribeEtaSec.store (std::max (0.0, elapsed * (1.0 - frac) / frac));
-                        } else if (evType == "transcription_complete" || parsed.hasProperty ("midi")) {
-                            const auto b64 = parsed.getProperty ("midi", "").toString();
-                            if (b64.isNotEmpty()) {
-                                juce::MemoryOutputStream mos;
-                                if (juce::Base64::convertFromBase64 (mos, b64)) {
-                                    ok = loadMidiFromMemory (mos.getMemoryBlock(), audioFile.getFileNameWithoutExtension());
-                                }
-                            }
-                            if (parsed.hasProperty ("bpm")) detectedBpm.store (static_cast<double> (parsed.getProperty ("bpm", 122.5)));
-                            transcribeProgress.store (1.0);
-                            transcribeEtaSec.store (0.0);
-                            ok = ok || !tracks.empty();
-                            msg = "Transcription complete";
-                        }
+                        if (parsed.hasProperty ("notes")) { if (auto* arr = parsed.getProperty ("notes", juce::var()).getArray()) { for (const auto& nv : *arr) { if (!nv.isObject()) continue; const auto inst = nv.getProperty ("instrument", "piano").toString(); const int prog = static_cast<int> (nv.getProperty ("program", 0)); const bool drum = static_cast<bool> (nv.getProperty ("is_drum", false)) || inst.containsIgnoreCase ("drum"); const int pitch = static_cast<int> (nv.getProperty ("pitch", 60)); const double start = static_cast<double> (nv.getProperty ("start", nv.getProperty ("time", 0.0))); const double dur = static_cast<double> (nv.getProperty ("duration", nv.getProperty ("dur", 0.25))); const int vel = static_cast<int> (nv.getProperty ("velocity", nv.getProperty ("vel", 96))); appendStreamedNote (inst, prog, drum, pitch, start, dur, vel); } } ;
+                            }if (evType == "start") { const auto inst = parsed.getProperty ("instrument", "piano").toString(); const int pitch = static_cast<int> (parsed.getProperty ("pitch", 60)); const double st = static_cast<double> (parsed.getProperty ("start_time", parsed.getProperty ("time", 0.0))); const int evIdx = static_cast<int> (parsed.getProperty ("index", -1)); const bool drum = inst.containsIgnoreCase ("drum"); { const juce::ScopedLock sl (stateLock); size_t ti = tracks.size(); for (size_t i = 0; i < tracks.size(); ++i) if (tracks[i].name.equalsIgnoreCase (inst)) { ti = i; break; } if (ti == tracks.size()) { InstrumentTrack tr; tr.id = "trk_" + juce::String (tracks.size()); tr.name = inst.toLowerCase(); tr.program = 0; tr.isDrum = drum; tr.colour = kPalette[tracks.size() % 6]; tracks.push_back (std::move (tr)); } const size_t ni = tracks[ti].notes.size(); tracks[ti].notes.push_back ({ nextNoteId++, pitch, st, 0.15, drum ? 105 : 96 }); if (evIdx >= 0) indexToNote[evIdx] = { ti, ni }; durationSec.store (std::max (durationSec.load(), st + 0.5)); } transcribeProcessedSec.store (std::max (transcribeProcessedSec.load(), st)); } else if (evType == "end") { const double et = static_cast<double> (parsed.getProperty ("end_time", parsed.getProperty ("time", 0.0))); const int startIdx = static_cast<int> (parsed.getProperty ("start_event_index", -1)); auto it = indexToNote.find (startIdx); if (it != indexToNote.end()) { const size_t ti = it->second.first; const size_t ni = it->second.second; { const juce::ScopedLock sl (stateLock); if (ti < tracks.size() && ni < tracks[ti].notes.size()) { tracks[ti].notes[ni].durSec = std::max (0.06, et - tracks[ti].notes[ni].startSec); durationSec.store (std::max (durationSec.load(), et + 0.5)); } } transcribeProcessedSec.store (std::max (transcribeProcessedSec.load(), et)); }
+               } else if (evType == "progress") { const double completed = static_cast<double> (parsed.getProperty ("completed", 0.0)); const double total = std::max (1.0, static_cast<double> (parsed.getProperty ("total", 1.0))); const double frac = juce::jlimit (0.02, 0.99, completed / total); transcribeProgress.store (frac); if (transcribeTotalSec.load() > 0.1) transcribeProcessedSec.store (frac * transcribeTotalSec.load()); const double elapsed = (juce::Time::getMillisecondCounterHiRes() / 1000.0) - wallStart; if (frac > 0.03) transcribeEtaSec.store (std::max (0.0, elapsed * (1.0 - frac) / frac)); } else if (evType == "transcription_complete" || parsed.hasProperty ("data") || parsed.hasProperty ("midi")) { const auto b64 = parsed.getProperty ("data", parsed.getProperty ("midi", "")).toString(); if (b64.isNotEmpty()) { juce::MemoryOutputStream mos; if (juce::Base64::convertFromBase64 (mos, b64)) { ok = loadMidiFromMemory (mos.getMemoryBlock(), audioFile.getFileNameWithoutExtension()); } } if (parsed.hasProperty ("beat_grid") && parsed.getProperty ("beat_grid", {}).isObject()) { const auto bg = parsed.getProperty ("beat_grid", {}); detectedBpm.store (static_cast<double> (bg.getProperty ("bpm", detectedBpm.load()))); barOffsetSec.store (static_cast<double> (bg.getProperty ("first_downbeat", barOffsetSec.load()))); const int bpb = static_cast<int> (bg.getProperty ("beats_per_bar", 4)); (void) bpb; } else if (parsed.hasProperty ("bpm")) { detectedBpm.store (static_cast<double> (parsed.getProperty ("bpm", 122.5))); } transcribeProgress.store (1.0); transcribeEtaSec.store (0.0); ok = ok || !tracks.empty(); msg = "Transcription complete"; }
                         if (transcribeTotalSec.load() > 0.1 && transcribeProcessedSec.load() > 0.0) {
                             const double frac = juce::jlimit (0.03, 0.99, transcribeProcessedSec.load() / transcribeTotalSec.load());
                             transcribeProgress.store (frac);
