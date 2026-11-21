@@ -323,7 +323,8 @@ MIDIstudioAudioProcessorEditor::MIDIstudioAudioProcessorEditor (MIDIstudioAudioP
     meterBox.addItemList ({ "4/4", "3/4", "6/8", "2/4", "5/4", "7/8" }, 1);
     keyBox.addItemList ({ "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" }, 1);
     scaleBox.addItemList ({ "Minor", "Major", "Dorian", "Mixolydian", "Harmonic Minor", "Pentatonic Minor" }, 1);
-    addAndMakeVisible (meterBox); addAndMakeVisible (keyBox); addAndMakeVisible (sc for (auto* cb : { &meterBox, &keyBox, &scaleBox }) { cb->setComponentID ("goldCombo"); cb->setColour (juce::ComboBox::textColourId, juce::Colour (0xff1c1207)); }aleBox);
+    addAndMakeVisible (meterBox); addAndMakeVisible (keyBox); addAndMakeVisible (scaleBox);
+    for (auto* cb : { &meterBox, &keyBox, &scaleBox }) { cb->setComponentID ("goldCombo"); cb->setColour (juce::ComboBox::textColourId, juce::Colour (0xff1c1207)); }
 
     downloadMenuBtn.onClick = [this] { showDownloadPopupMenu(); };
     splitZipBtn.onClick = [this] {
